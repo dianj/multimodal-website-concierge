@@ -1,0 +1,7 @@
+New Q4 Services Update for Website:
+
+1. AI Workflow Automation - Custom LLM agents connected to your CRM and email.
+2. E-Commerce Modernization - High-speed online stores with automated inventory sync.
+3. 24/7 Managed Security - Continuous monitoring, backups, and DDoS protection.
+
+Please also update our working hours to: Mon - Sat: 08:30 - 19:30.

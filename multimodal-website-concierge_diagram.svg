@@ -1,0 +1,234 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 1250" width="1440" height="1250" font-family="'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <title>Multimodal AI Website Maintenance Concierge: architecture and chat-turn flow</title>
+  <desc>Browser (chat pane and live preview) talks to a FastAPI server. The server runs an agent loop against a local LM Studio model, executes 12 validated tools that write JSON snapshots to SQLite, transcribes voice locally with faster-whisper and synthesizes speech with the online Microsoft Edge TTS service.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <style>
+      .title { font-size: 22px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-size: 13px; fill: #475569; }
+      .h { font-size: 14px; font-weight: 700; fill: #0f172a; }
+      .sh { font-size: 12.5px; font-weight: 700; fill: #1e293b; }
+      .t { font-size: 11.5px; fill: #334155; }
+      .m { font-size: 11px; fill: #1e293b; font-family: Consolas, 'Cascadia Mono', Menlo, monospace; }
+      .n { font-size: 11px; font-weight: 700; fill: #ffffff; text-anchor: middle; dominant-baseline: central; }
+      .lbl { font-size: 10.5px; fill: #334155; text-anchor: middle; }
+      .call { stroke: #334155; stroke-width: 1.6; fill: none; }
+      .resp { stroke: #334155; stroke-width: 1.6; fill: none; stroke-dasharray: 6 4; }
+      .sub { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1440" height="1250" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="24" y="40" class="title">Multimodal AI Website Maintenance Concierge: Architecture</text>
+  <text x="24" y="64" class="subtitle">Local-first: the LLM runs in LM Studio and speech-to-text runs on the CPU. Only text-to-speech uses an online service. The agent never writes HTML/CSS; it changes a validated JSON site state through tools.</text>
+
+  <!-- ===================== BROWSER ===================== -->
+  <rect x="24" y="84" width="360" height="808" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+  <text x="40" y="108" class="h">Browser · index.html (vanilla JS)</text>
+
+  <rect x="40" y="124" width="328" height="396" rx="6" class="sub"/>
+  <text x="54" y="146" class="sh">Chat pane (left)</text>
+  <text x="54" y="170" class="t">• Text prompt (English primary, Bulgarian supported)</text>
+  <text x="54" y="192" class="t">• Attach: screenshot (.png/.jpg/.webp),</text>
+  <text x="54" y="210" class="t">   content brief or Skill file (.md/.txt/.json)</text>
+  <text x="54" y="232" class="t">• Mic button: records a voice command</text>
+  <text x="54" y="250" class="t">   (MediaRecorder → /api/transcribe)</text>
+  <text x="54" y="272" class="t">• Voice replies on/off · male / female voice</text>
+  <text x="54" y="294" class="t">• Model selector: Gemma 4 26B / Qwen 3.8 27B</text>
+  <text x="54" y="316" class="t">• A− / A+ chat text size (saved in localStorage)</text>
+  <text x="54" y="338" class="t">• Replies shown as safe Markdown (DOM nodes,</text>
+  <text x="54" y="356" class="t">   never innerHTML) + list of tools used</text>
+  <text x="54" y="378" class="t">• "App updated → Reload" banner when the page</text>
+  <text x="54" y="396" class="t">   is older than the server build</text>
+  <text x="54" y="418" class="t">• Loader with elapsed seconds while working</text>
+
+  <rect x="40" y="536" width="328" height="340" rx="6" class="sub"/>
+  <text x="54" y="558" class="sh">Live website preview (right)</text>
+  <text x="54" y="582" class="t">• Renders the site JSON state → DOM</text>
+  <text x="54" y="600" class="t">   (textContent only, no generated HTML)</text>
+  <text x="54" y="622" class="t">• Sections in stored order: hero, services,</text>
+  <text x="54" y="640" class="t">   testimonials, contact</text>
+  <text x="54" y="662" class="t">• Testimonials become a slider with 2+ items</text>
+  <text x="54" y="680" class="t">   (arrows, dots, autoplay, pause on hover)</text>
+  <text x="54" y="702" class="t">• Light / Dark / Auto theme switcher</text>
+  <text x="54" y="720" class="t">   (Auto follows the visitor's OS setting)</text>
+  <text x="54" y="742" class="t">• Hover CSS built from validated values</text>
+  <text x="54" y="764" class="t">• Undo / Redo buttons + version badge</text>
+  <text x="54" y="786" class="t">• Motion off for prefers-reduced-motion</text>
+  <text x="54" y="808" class="t">• Visitor choices (theme, voice, font size)</text>
+  <text x="54" y="826" class="t">   are stored in the browser's localStorage</text>
+
+  <!-- ===================== SERVER ===================== -->
+  <rect x="484" y="84" width="480" height="808" rx="10" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5"/>
+  <text x="500" y="108" class="h">FastAPI · server.py (uvicorn, default port 8000)</text>
+
+  <rect x="500" y="124" width="448" height="150" rx="6" class="sub"/>
+  <text x="514" y="146" class="sh">HTTP endpoints</text>
+  <text x="514" y="170" class="m">GET</text><text x="552" y="170" class="m">/</text><text x="704" y="170" class="t">page + injected build id</text>
+  <text x="514" y="188" class="m">POST</text><text x="552" y="188" class="m">/api/chat</text><text x="704" y="188" class="t">message + file + voice_mode</text>
+  <text x="514" y="206" class="m">GET</text><text x="552" y="206" class="m">/api/state</text><text x="704" y="206" class="t">POST /api/undo · POST /api/redo</text>
+  <text x="514" y="224" class="m">GET</text><text x="552" y="224" class="m">/api/models</text><text x="704" y="224" class="t">POST /api/model (switch LLM)</text>
+  <text x="514" y="242" class="m">POST</text><text x="552" y="242" class="m">/api/transcribe</text><text x="704" y="242" class="t">audio → text</text>
+  <text x="514" y="260" class="m">POST</text><text x="552" y="260" class="m">/api/tts</text><text x="704" y="260" class="t">text → MP3 (gender, brief)</text>
+
+  <rect x="500" y="286" width="448" height="52" rx="6" class="sub"/>
+  <text x="514" y="306" class="sh">Session store (in memory, HTTP-only cookie)</text>
+  <text x="514" y="326" class="t">chat history + active Skill files per browser session · lost on restart</text>
+
+  <rect x="500" y="350" width="448" height="70" rx="6" class="sub"/>
+  <text x="514" y="370" class="sh">Model manager (global: one LLM in VRAM)</text>
+  <text x="514" y="390" class="t">Switch = unload current model → load selected one; chat paused meanwhile</text>
+  <text x="514" y="408" class="t">Gemma is loaded on startup · previous model restored if loading fails</text>
+
+  <rect x="500" y="432" width="448" height="128" rx="6" class="sub"/>
+  <text x="514" y="452" class="sh">Agent loop (worker thread)</text>
+  <text x="514" y="474" class="t">System prompt = rules + capabilities + HONESTY / VERIFICATION rules</text>
+  <text x="514" y="492" class="t">   + voice-mode brevity rules (if on) + active Skill files</text>
+  <text x="514" y="510" class="t">Sends history + 12 tool schemas (+ Base64 screenshot) to the model</text>
+  <text x="514" y="528" class="t">Executes tool calls, up to 8 rounds per turn</text>
+  <text x="514" y="546" class="t">A failed turn never corrupts history · screenshots dropped after the turn</text>
+
+  <rect x="500" y="572" width="448" height="196" rx="6" class="sub"/>
+  <text x="514" y="592" class="sh">Tool layer: 12 validated tools (no raw HTML/CSS)</text>
+  <text x="514" y="616" class="m">get_current_site_state</text>
+  <text x="734" y="616" class="m">update_text_content</text>
+  <text x="514" y="634" class="m">update_services_list</text>
+  <text x="734" y="634" class="m">update_testimonials</text>
+  <text x="514" y="652" class="m">update_theme_style</text>
+  <text x="734" y="652" class="m">configure_dark_mode</text>
+  <text x="514" y="670" class="m">update_card_style</text>
+  <text x="734" y="670" class="m">update_hover_effect</text>
+  <text x="514" y="688" class="m">update_hero_image</text>
+  <text x="734" y="688" class="m">reorder_sections</text>
+  <text x="514" y="706" class="m">rollback_version</text>
+  <text x="734" y="706" class="m">create_approval_ticket</text>
+  <text x="514" y="728" class="t">Guardrails: 6-digit hex · contrast ≥ 4.5:1 (text/background, white on primary,</text>
+  <text x="514" y="744" class="t">dark palette, card and hover backgrounds) · email/phone can't be emptied ·</text>
+  <text x="514" y="760" class="t">whitelisted value ranges · http(s) image URLs · max 12 services, 10 testimonials</text>
+
+  <rect x="500" y="780" width="448" height="96" rx="6" class="sub"/>
+  <text x="514" y="800" class="sh">Voice</text>
+  <text x="514" y="822" class="t">STT: pick EN or BG by detection probability + domain vocabulary prompt</text>
+  <text x="514" y="840" class="t">TTS: voice chosen by reply script (Cyrillic → BG) and gender · 3 attempts,</text>
+  <text x="514" y="858" class="t">15 s timeout each · auto-play trimmed to ~500 chars at a sentence end</text>
+
+  <!-- ===================== RIGHT COLUMN ===================== -->
+  <!-- Legend -->
+  <rect x="1064" y="84" width="352" height="236" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1"/>
+  <text x="1080" y="108" class="h">Legend</text>
+  <line x1="1080" y1="134" x2="1140" y2="134" class="call" marker-end="url(#arrow)"/>
+  <text x="1152" y="138" class="t">request / call</text>
+  <line x1="1080" y1="162" x2="1140" y2="162" class="resp" marker-end="url(#arrow)"/>
+  <text x="1152" y="166" class="t">response / result</text>
+  <rect x="1080" y="180" width="60" height="24" rx="4" fill="#f8fafc" stroke="#64748b" stroke-dasharray="5 3"/>
+  <text x="1152" y="196" class="t">online (non-local) service</text>
+  <circle cx="1110" cy="228" r="10" fill="#0f172a"/>
+  <text x="1110" y="228" class="n">1</text>
+  <text x="1152" y="232" class="t">step of one chat turn (see the list below)</text>
+  <text x="1080" y="270" class="t">All boxes except Edge TTS run on the local machine.</text>
+  <text x="1080" y="290" class="t">Ports: app 8000 (uvicorn default) · LM Studio 1235.</text>
+
+  <!-- LM Studio -->
+  <rect x="1064" y="340" width="352" height="220" rx="10" fill="#faf5ff" stroke="#9333ea" stroke-width="1.5"/>
+  <text x="1080" y="364" class="h">LM Studio · localhost:1235 (local GPU)</text>
+  <text x="1080" y="390" class="t">OpenAI-compatible /v1/chat/completions</text>
+  <text x="1080" y="408" class="t">   (tool calling + image input)</text>
+  <text x="1080" y="430" class="t">REST /api/v1/models (list, load, unload)</text>
+  <text x="1080" y="456" class="sh">Models offered in the UI</text>
+  <text x="1080" y="478" class="t">• Gemma 4 26B A4B: default (vision, tools)</text>
+  <text x="1080" y="498" class="t">• Qwen 3.8 27B: optional (vision, tools)</text>
+  <text x="1080" y="524" class="t">Only one model is loaded at a time</text>
+  <text x="1080" y="542" class="t">(context length 16384 when loaded by the app)</text>
+
+  <!-- SQLite -->
+  <rect x="1064" y="580" width="352" height="188" rx="10" fill="#fffbeb" stroke="#d97706" stroke-width="1.5"/>
+  <text x="1080" y="604" class="h">SQLite · website_cms.db</text>
+  <text x="1080" y="630" class="sh">site_versions</text>
+  <text x="1080" y="650" class="t">Full JSON snapshot of the site per change</text>
+  <text x="1080" y="668" class="t">status: 0 active · 1 undone (redo) · 2 discarded</text>
+  <text x="1080" y="686" class="t">upgrade_state() migrates old snapshots on read</text>
+  <text x="1080" y="712" class="sh">change_tickets</text>
+  <text x="1080" y="732" class="t">CR-XXXX developer tickets: summary + approved</text>
+  <text x="1080" y="750" class="t">JSON state (created when the client approves)</text>
+
+  <!-- faster-whisper -->
+  <rect x="1064" y="780" width="352" height="90" rx="10" fill="#f0fdfa" stroke="#0d9488" stroke-width="1.5"/>
+  <text x="1080" y="804" class="h">faster-whisper · large-v3-turbo</text>
+  <text x="1080" y="828" class="t">Local CPU (int8), loaded on the first voice request</text>
+  <text x="1080" y="848" class="t">Voice activity detection · EN / BG only</text>
+
+  <!-- Edge TTS -->
+  <rect x="1064" y="884" width="352" height="96" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.5" stroke-dasharray="7 4"/>
+  <text x="1080" y="908" class="h">Microsoft Edge TTS (online)</text>
+  <text x="1080" y="930" class="t">edge-tts returns MP3 · male: Andrew / Borislav,</text>
+  <text x="1080" y="948" class="t">female: Ava / Kalina (fallbacks: Brian, Emma)</text>
+  <text x="1080" y="966" class="t">The reply text leaves the machine</text>
+
+  <!-- ===================== ARROWS ===================== -->
+  <!-- 1: chat pane -> /api/chat -->
+  <line x1="368" y1="190" x2="498" y2="190" class="call" marker-end="url(#arrow)"/>
+  <circle cx="434" cy="190" r="10" fill="#0f172a"/><text x="434" y="190" class="n">1</text>
+  <!-- 6: response -> chat pane -->
+  <line x1="498" y1="228" x2="370" y2="228" class="resp" marker-end="url(#arrow)"/>
+  <circle cx="434" cy="228" r="10" fill="#0f172a"/><text x="434" y="228" class="n">6</text>
+  <!-- 7: state -> preview -->
+  <line x1="498" y1="660" x2="370" y2="660" class="resp" marker-end="url(#arrow)"/>
+  <circle cx="434" cy="660" r="10" fill="#0f172a"/><text x="434" y="660" class="n">7</text>
+  <text x="434" y="642" class="lbl">site state</text>
+
+  <!-- model manager -> LM Studio load/unload -->
+  <line x1="948" y1="385" x2="1062" y2="385" class="call" marker-end="url(#arrow)"/>
+  <text x="1006" y="376" class="lbl">unload / load</text>
+  <!-- 2: agent loop -> LM Studio -->
+  <line x1="948" y1="478" x2="1062" y2="478" class="call" marker-end="url(#arrow)"/>
+  <circle cx="1006" cy="478" r="10" fill="#0f172a"/><text x="1006" y="478" class="n">2</text>
+  <!-- 3: LM Studio -> agent loop -->
+  <line x1="1062" y1="516" x2="950" y2="516" class="resp" marker-end="url(#arrow)"/>
+  <circle cx="1006" cy="516" r="10" fill="#0f172a"/><text x="1006" y="516" class="n">3</text>
+
+  <!-- 4: tools -> SQLite -->
+  <line x1="948" y1="650" x2="1062" y2="650" class="call" marker-end="url(#arrow)"/>
+  <circle cx="1006" cy="650" r="10" fill="#0f172a"/><text x="1006" y="650" class="n">4</text>
+  <!-- 5: SQLite -> tools -->
+  <line x1="1062" y1="688" x2="950" y2="688" class="resp" marker-end="url(#arrow)"/>
+  <circle cx="1006" cy="688" r="10" fill="#0f172a"/><text x="1006" y="688" class="n">5</text>
+
+  <!-- STT -->
+  <line x1="948" y1="806" x2="1062" y2="806" class="call" marker-end="url(#arrow)"/>
+  <line x1="1062" y1="826" x2="950" y2="826" class="resp" marker-end="url(#arrow)"/>
+  <text x="1006" y="797" class="lbl">audio → text</text>
+  <!-- TTS -->
+  <path d="M 948 848 L 1012 848 L 1012 915 L 1062 915" class="call" marker-end="url(#arrow)"/>
+  <text x="1037" y="907" class="lbl">reply text</text>
+  <path d="M 1062 952 L 996 952 L 996 868 L 950 868" class="resp" marker-end="url(#arrow)"/>
+  <text x="1030" y="966" class="lbl">MP3</text>
+
+  <!-- ===================== CHAT TURN ===================== -->
+  <rect x="24" y="1000" width="1392" height="230" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-width="1"/>
+  <text x="40" y="1026" class="h">One chat turn (numbers match the arrows)</text>
+
+  <circle cx="52" cy="1052" r="10" fill="#0f172a"/><text x="52" y="1052" class="n">1</text>
+  <text x="72" y="1056" class="t">The browser sends the message (plus a screenshot, brief or Skill file and the voice_mode flag) to POST /api/chat. A voice command is first turned into text by POST /api/transcribe; a Skill file is added to the session's active Skills.</text>
+
+  <circle cx="52" cy="1078" r="10" fill="#0f172a"/><text x="52" y="1078" class="n">2</text>
+  <text x="72" y="1082" class="t">The agent loop sends the system prompt (rules + active Skills + voice-mode rules), the session history and the 12 tool schemas to the active model in LM Studio.</text>
+
+  <circle cx="52" cy="1104" r="10" fill="#0f172a"/><text x="52" y="1104" class="n">3</text>
+  <text x="72" y="1108" class="t">The model answers with tool calls or a final reply. Tool calls are executed and sent back to the model; the loop repeats up to 8 rounds.</text>
+
+  <circle cx="52" cy="1130" r="10" fill="#0f172a"/><text x="52" y="1130" class="n">4</text>
+  <text x="72" y="1134" class="t">Each tool validates its input, applies the guardrails and, if allowed, saves a new full JSON snapshot in site_versions (a new change after Undo discards the redo branch).</text>
+
+  <circle cx="52" cy="1156" r="10" fill="#0f172a"/><text x="52" y="1156" class="n">5</text>
+  <text x="72" y="1160" class="t">The new version id comes back; the tool result (success, error or blocked_by_guardrail with a reason) is passed to the model in the next round.</text>
+
+  <circle cx="52" cy="1182" r="10" fill="#0f172a"/><text x="52" y="1182" class="n">6</text>
+  <text x="72" y="1186" class="t">The server returns the reply, the tools used, the current version and the full site state. With voice replies on, the browser then requests MP3 from POST /api/tts and plays it.</text>
+
+  <circle cx="52" cy="1208" r="10" fill="#0f172a"/><text x="52" y="1208" class="n">7</text>
+  <text x="72" y="1212" class="t">The live preview re-renders from the JSON state. Undo / Redo and GET /api/state use the same path: SQLite → server → preview.</text>
+</svg>

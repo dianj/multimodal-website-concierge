@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Local data: the SQLite database is recreated from DEFAULT_SITE_STATE on start
+*.db
+*.db-journal
+
+# Test artifacts
+test-results/
+playwright-report/
+evals/results/*.json
+
+# Editors / local tooling / secrets
+.vscode/
+.idea/
+.claude/
+.env
+*.log
