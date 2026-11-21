@@ -47,7 +47,17 @@ This is a portfolio project. It simulates a **client-facing AI website maintenan
 
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI app: endpoints, agent loop, 14 tools and guardrails, ticket system, SQLite versioning, LM Studio model manager, voice (STT and TTS) |
+| `server.py` | FastAPI app: HTTP endpoints and in-memory chat sessions. Thin layer over the `concierge` package. |
+| `concierge/config.py` | Settings from environment variables, paths and limits |
+| `concierge/site_state.py` | `DEFAULT_SITE_STATE`, schema defaults, `upgrade_state()` migration, text normalization |
+| `concierge/guardrails.py` | Hex color validation and the contrast checks |
+| `concierge/db.py` | SQLite: versioned snapshots, table creation and column migrations |
+| `concierge/tools.py` | The 11 site-editing tools, including undo (`rollback_version`) and redo |
+| `concierge/tickets.py` | Ticket storage and the 3 ticket tools |
+| `concierge/registry.py` | Tool schemas sent to the model and `execute_tool_call` (the dispatcher that never raises) |
+| `concierge/agent.py` | System prompt, voice-mode rules and the tool-calling loop (`run_llm_turn`) |
+| `concierge/lmstudio.py` | LM Studio model list, load, unload and switch |
+| `concierge/voice.py` | faster-whisper STT with EN/BG language pick, text cleanup for speech, edge-tts synthesis with retries |
 | `index.html` | Single-page UI in vanilla JS: chat pane and live preview renderer. No build step. |
 | `website_cms.db` | SQLite database with `site_versions` and `change_tickets`. Holds demo data; can be deleted to reset. |
 | `requirements.txt` | Python dependencies. `av<19` is pinned on purpose (see §12). |
@@ -70,6 +80,8 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
    chat pane                     agent loop + tools ──► SQLite website_cms.db (JSON snapshots, tickets)
    live preview  ◄── state JSON ─┘   voice ──────────► faster-whisper (local CPU)  /  Edge TTS (online)
 ```
+
+**Module dependencies** go one way, so each layer can be tested on its own: `server` → `agent` → `registry` → `tools` / `tickets` → `db` → `site_state` / `config`. `guardrails` is used by `tools`; `lmstudio` and `voice` are used only by `server` (and `lmstudio` by the evals).
 
 **One chat turn** (the same steps as in the diagram):
 1. `POST /api/chat` sends the message, an optional file and the `voice_mode` flag. A voice command is first transcribed through `POST /api/transcribe`.
@@ -164,7 +176,7 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 
 ---
 
-## 7. System prompt rules (in `build_system_prompt`)
+## 7. System prompt rules (`build_system_prompt` in `concierge/agent.py`)
 
 * **Language:** English is primary. The agent replies in Bulgarian when the user writes or speaks Bulgarian. Website content keeps its language unless a translation is requested.
 * **Paragraphs:** plain text only, with `\n\n` between paragraphs, never `<p>` or `<br>`.

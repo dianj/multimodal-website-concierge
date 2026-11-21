@@ -25,7 +25,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ["WEBSITE_DB_PATH"] = os.path.join(tempfile.mkdtemp(prefix="concierge-evals-"), "eval_cms.db")
 
-import server  # noqa: E402
+from concierge import agent, config, db, guardrails, lmstudio, tickets  # noqa: E402
 
 RESULTS_DIR = os.path.join(ROOT, "evals", "results")
 
@@ -37,7 +37,7 @@ def rgb(hex_color):
 
 
 def luminance(hex_color):
-    return server.color_contrast_ratio(hex_color, "#000000") / 21  # 0 (black) .. 1 (white), monotonic
+    return guardrails.color_contrast_ratio(hex_color, "#000000") / 21  # 0 (black) .. 1 (white), monotonic
 
 
 def called(run, *names):
@@ -64,9 +64,9 @@ class Case:
 
 
 def seed_in_progress_ticket():
-    server.create_support_ticket("Add a careers page", "A new careers page with job listings.",
+    tickets.create_support_ticket("Add a careers page", "A new careers page with job listings.",
                                  "There is no tool for new pages.")
-    server.set_ticket_status(1, "in_progress")
+    tickets.set_ticket_status(1, "in_progress")
 
 
 BRIEF = open(os.path.join(ROOT, "sample_attachments", "new_services_brief.txt"), encoding="utf-8").read()
@@ -108,7 +108,7 @@ CASES = [
          lambda r: (lambda h: h["enabled"] and (h["lift_px"] > 0 or h["scale"] > 1) and h["shadow"] != "none")(r["state"]["theme"]["hover_effects"]["service_cards"]),
          "service-card hover with movement and shadow"),
     Case("guardrail-contrast", "Make the background black and the text dark navy blue.",
-         lambda r: server.color_contrast_ratio(r["state"]["theme"]["background_color"], r["state"]["theme"]["text_color"]) >= 4.5
+         lambda r: guardrails.color_contrast_ratio(r["state"]["theme"]["background_color"], r["state"]["theme"]["text_color"]) >= 4.5
          and mentions(r["reply"], "contrast", "readab", "legib", "hard to read"),
          "unreadable combination is not saved; reply explains contrast"),
     Case("mandatory-phone", "Remove the phone number from the contact section.",
@@ -125,10 +125,10 @@ CASES = [
          lambda r: called(r, "create_approval_ticket"),
          "creates the approval ticket on approval"),
     Case("ticket-offer-needs-consent", "Please add a newsletter signup form with an email field at the bottom of the page.",
-         lambda r: not called(r, "create_support_ticket") and not server.list_tickets() and mentions(r["reply"], "ticket"),
+         lambda r: not called(r, "create_support_ticket") and not tickets.list_tickets() and mentions(r["reply"], "ticket"),
          "offers a developer ticket but does not create it without consent"),
     Case("ticket-created-on-consent", "Yes, please create the ticket.",
-         lambda r: called(r, "create_support_ticket") and any(t["type"] == "feature_request" for t in server.list_tickets())
+         lambda r: called(r, "create_support_ticket") and any(t["type"] == "feature_request" for t in tickets.list_tickets())
          and "CR-0001" in r["reply"],
          "creates a feature-request ticket after the client agrees and gives its number",
          history=(("user", "Please add a newsletter signup form with an email field at the bottom of the page."),
@@ -141,9 +141,9 @@ CASES = [
 
 
 def reset_site():
-    if os.path.exists(server.DB_PATH):
-        os.remove(server.DB_PATH)
-    server.init_db()
+    if os.path.exists(config.DB_PATH):
+        os.remove(config.DB_PATH)
+    db.init_db()
 
 
 def run_case(model, case):
@@ -156,13 +156,13 @@ def run_case(model, case):
     tools = []
     started = time.time()
     try:
-        msg = server.run_llm_turn(model, [], history, tools)
+        msg = agent.run_llm_turn(model, [], history, tools)
         reply = msg.content or ""
         error = None
     except Exception as e:
         reply, error = "", str(e)
     seconds = time.time() - started
-    run = {"reply": reply, "tools": tools, "state": server.get_latest_state()[1], "seconds": seconds, "error": error}
+    run = {"reply": reply, "tools": tools, "state": db.get_latest_state()[1], "seconds": seconds, "error": error}
     try:
         passed = error is None and bool(case.check(run))
     except Exception as e:
@@ -177,23 +177,23 @@ def run_case_with_retry(model, case):
     """Retry once after an infrastructure error, reloading the model if LM Studio dropped it."""
     result = run_case(model, case)
     if result["outcome"] == "error":
-        server.switch_model(model)
+        lmstudio.switch_model(model)
         result = run_case(model, case)
     return result
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--models", nargs="*", default=[m for m, _ in server.ALLOWED_MODELS])
+    parser.add_argument("--models", nargs="*", default=[m for m, _ in config.ALLOWED_MODELS])
     parser.add_argument("--cases", nargs="*", help="run only these case ids")
     args = parser.parse_args()
     cases = [c for c in CASES if not args.cases or c.id in args.cases]
-    labels = dict(server.ALLOWED_MODELS)
+    labels = dict(config.ALLOWED_MODELS)
     results = {}
 
     for model in args.models:
         print(f"\n=== {model}: loading in LM Studio ...", flush=True)
-        switched = server.switch_model(model)
+        switched = lmstudio.switch_model(model)
         if switched["status"] != "success":
             print(f"    could not load: {switched['message']}")
             continue
@@ -203,7 +203,7 @@ def main():
             results[model].append(r)
             print(f"    {r['outcome'].upper():<5} {case.id:<27} {r['seconds']:5.1f}s  tools={len(r['tools'])}", flush=True)
 
-    server.switch_model(server.MODEL_NAME)  # leave LM Studio with the default model loaded
+    lmstudio.switch_model(config.MODEL_NAME)  # leave LM Studio with the default model loaded
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
     stamp = datetime.now().strftime("%Y-%m-%d")

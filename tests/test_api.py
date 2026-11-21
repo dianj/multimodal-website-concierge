@@ -2,6 +2,8 @@
 import httpx
 import pytest
 
+from concierge import agent, config
+
 
 @pytest.fixture()
 def client(app_url):
@@ -65,7 +67,7 @@ def test_screenshot_is_sent_once_then_replaced_in_history(client, fake_lm):
 
 
 def test_llm_outage_does_not_corrupt_the_session(client, fake_lm, srv):
-    fake_lm.fail_count = srv.llm_client.max_retries + 1  # fail the first try and every automatic retry
+    fake_lm.fail_count = agent.llm_client.max_retries + 1  # fail the first try and every automatic retry
     data = chat(client, "first")
     assert "Error" in data["reply"]
     fake_lm.script(reply="Back online.")
@@ -74,11 +76,11 @@ def test_llm_outage_does_not_corrupt_the_session(client, fake_lm, srv):
     assert [m["role"] for m in history] == ["user", "assistant"]  # failed turn left nothing behind
 
 
-def test_tool_loop_is_capped(client, fake_lm, srv):
-    fake_lm.script_tool_loop("get_current_site_state", {}, rounds=srv.MAX_TOOL_ROUNDS + 1)
+def test_tool_loop_is_capped(client, fake_lm):
+    fake_lm.script_tool_loop("get_current_site_state", {}, rounds=config.MAX_TOOL_ROUNDS + 1)
     data = chat(client, "loop forever")
     assert "too many consecutive tool calls" in data["reply"]
-    assert len(data["tools_used"]) == srv.MAX_TOOL_ROUNDS + 1
+    assert len(data["tools_used"]) == config.MAX_TOOL_ROUNDS + 1
 
 
 def test_undo_and_redo_endpoints(client, fake_lm):
@@ -88,7 +90,7 @@ def test_undo_and_redo_endpoints(client, fake_lm):
     assert client.post("/api/redo").json()["state"]["sections"]["hero"]["title"] == "V2"
 
 
-def test_model_switch_unloads_current_model_first(client, fake_lm, srv):
+def test_model_switch_unloads_current_model_first(client, fake_lm):
     result = client.post("/api/model", data={"model": "qwen3.8-27b"}).json()
     assert result == {"status": "success", "active": "qwen3.8-27b"}
     assert fake_lm.loaded == {"qwen3.8-27b"}  # only one model in memory

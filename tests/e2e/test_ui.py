@@ -7,6 +7,8 @@ import json
 import pytest
 from playwright.sync_api import Page, expect
 
+from concierge import tickets
+
 pytestmark = pytest.mark.e2e
 
 DARK_BG = "rgb(15, 23, 42)"      # dark_mode.background_color #0f172a
@@ -117,7 +119,7 @@ def test_voice_reply_uses_selected_gender_and_brief_mode(page: Page, app_url, fa
     assert "VOICE MODE IS ON" in fake_lm.last_system_prompt()
 
 
-def test_ticket_panel_shows_new_ticket_and_updates_status(page: Page, app_url, fake_lm, srv):
+def test_ticket_panel_shows_new_ticket_and_updates_status(page: Page, app_url, fake_lm):
     fake_lm.script(("create_support_ticket", {"title": "Newsletter signup form",
                                               "client_request": "Add a newsletter form with an email field.",
                                               "reason": "No tool can add forms.", "priority": "high"}),
@@ -136,7 +138,7 @@ def test_ticket_panel_shows_new_ticket_and_updates_status(page: Page, app_url, f
 
     card.get_by_label("Status of CR-0001").select_option("done")
     expect(page.locator("#ticketBadge")).to_be_hidden()   # no open tickets left
-    assert srv.get_ticket(1)["status"] == "done"
+    assert tickets.get_ticket(1)["status"] == "done"
     page.keyboard.press("Escape")
     expect(page.locator("#ticketPanel")).to_be_hidden()
 

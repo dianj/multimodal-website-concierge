@@ -1,6 +1,6 @@
 """Shared fixtures: a fake LM Studio, a throwaway SQLite database and the real app on a free port.
 
-Environment variables must be set before `server` is imported, because it reads them at import time.
+Environment variables must be set before `server` (and the `concierge` package) is imported, because they are read at import time.
 """
 import os
 import socket
@@ -23,6 +23,7 @@ os.environ["WEBSITE_DB_PATH"] = os.path.join(_TMP_DIR, "test_cms.db")
 os.environ["LLM_BASE_URL"] = _FAKE.base_url
 
 import server  # noqa: E402  (must come after the environment is prepared)
+from concierge import config, db, lmstudio  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -33,7 +34,7 @@ def fake_lm():
 
 @pytest.fixture(scope="session")
 def srv():
-    """The imported server module (tools, guardrails, helpers)."""
+    """The imported server module (the HTTP layer: app, sessions, app_build)."""
     return server
 
 
@@ -42,11 +43,11 @@ def clean_state(fake_lm):
     """Every test starts from the default site, empty sessions, Gemma active and an empty script."""
     fake_lm.reset()
     fake_lm.loaded = {"gemma-4-26b-a4b-it"}
-    if os.path.exists(server.DB_PATH):
-        os.remove(server.DB_PATH)
-    server.init_db()
+    if os.path.exists(config.DB_PATH):
+        os.remove(config.DB_PATH)
+    db.init_db()
     server.sessions.clear()
-    server.model_state.update(active=server.MODEL_NAME, switching=False, target=None, error=None)
+    lmstudio.model_state.update(active=config.MODEL_NAME, switching=False, target=None, error=None)
     yield
 
 
@@ -62,8 +63,8 @@ def app_url(fake_lm):
     import uvicorn
 
     port = _free_port()
-    config = uvicorn.Config(server.app, host="127.0.0.1", port=port, log_level="warning")
-    uv = uvicorn.Server(config)
+    uv_config = uvicorn.Config(server.app, host="127.0.0.1", port=port, log_level="warning")
+    uv = uvicorn.Server(uv_config)
     thread = threading.Thread(target=uv.run, daemon=True)
     thread.start()
     deadline = time.time() + 15
