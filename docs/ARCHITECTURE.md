@@ -1,6 +1,6 @@
-# Handoff: Multimodal AI Website Maintenance Concierge
+# Architecture and Developer Guide: Multimodal AI Website Maintenance Concierge
 
-This document describes the **current state** of the project, last updated 2026-11-21. It is meant for the next developer or AI assistant who picks the project up. The architecture diagram is in [`multimodal-website-concierge_diagram.svg`](multimodal-website-concierge_diagram.svg).
+This guide explains how the project works: architecture, data model, agent tools, frontend, voice, model management, testing and known limitations. The [README](../README.md) is the short overview. The architecture diagram is in [`multimodal-website-concierge_diagram.svg`](../multimodal-website-concierge_diagram.svg).
 
 ---
 
@@ -275,21 +275,7 @@ python -m pytest                            # needs: python -m playwright instal
 
 ---
 
-## 13. Suggested demo scenarios
-
-1. **Direct prompt (EN or BG):** "Change the primary color to dark green and move the testimonials above the services."
-2. **Skill injection:** upload `sample_attachments/brand_guidelines_skill.md` as a Skill, then ask for a bright red button. The agent should refuse and propose `#14532d`.
-3. **Content brief:** upload `sample_attachments/new_services_brief.txt`. The three services and the working hours should update.
-4. **Screenshot vision:** upload a screenshot and ask the agent to match its primary color or critique the layout.
-5. **Dark mode:** "Create a dark theme with a Light / Dark / Auto switcher in a bar at the top."
-6. **Slider:** "Add two more testimonials." The agent should flag them as placeholders.
-7. **Hover and cards:** "Add a lift-and-shadow hover to the service cards and a lighter outline in dark mode."
-8. **Voice:** turn on Voice replies, speak a command, and compare the male and female voices.
-9. **Honesty and tickets:** ask for a newsletter form. The agent should say it cannot add one and offer a ticket. Reply "yes" and it creates `CR-XXXX`. Open 🎫 Tickets, set the ticket to In progress, then ask the agent for the ticket's status.
-
----
-
-## 14. Known limitations and open risks
+## 13. Known limitations and open risks
 
 * No authentication or authorization. It is a local demo.
 * The site state in SQLite is global. Chat sessions are separate, but all sessions edit the same site.
@@ -300,7 +286,7 @@ python -m pytest                            # needs: python -m playwright instal
 * The contrast check supports 6-digit hex only.
 * For public deployment the app still needs HTTPS, authentication, rate limits, security headers, upload limits and persistent per-user storage.
 
-## 15. Ideas for next steps
+## 14. Ideas for next steps
 
 * Ticket notifications (email or a Slack/Discord webhook) and a protected developer view.
 * Upload size and type limits for chat attachments.

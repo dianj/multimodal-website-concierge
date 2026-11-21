@@ -45,6 +45,18 @@ Python · FastAPI · SQLite · vanilla HTML/CSS/JS · LM Studio (OpenAI-compatib
 
 Configuration through environment variables: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_CONTEXT_LENGTH`, `WHISPER_MODEL`. Delete `website_cms.db` to reset the demo site.
 
+### Things to try
+
+1. **Direct prompt (EN or BG):** "Change the primary color to dark green and move the testimonials above the services."
+2. **Skill injection:** upload `sample_attachments/brand_guidelines_skill.md` as a Skill, then ask for a bright red button. The agent refuses and proposes `#14532d`.
+3. **Content brief:** upload `sample_attachments/new_services_brief.txt`. The three services and the working hours are updated.
+4. **Screenshot vision:** upload a screenshot and ask the agent to match its primary color or critique the layout.
+5. **Dark mode:** "Create a dark theme with a Light / Dark / Auto switcher in a bar at the top."
+6. **Slider:** "Add two more testimonials." The agent flags them as placeholder text.
+7. **Hover and cards:** "Add a lift-and-shadow hover to the service cards and a lighter outline in dark mode."
+8. **Voice:** turn on Voice replies, speak a command, and compare the male and female voices.
+9. **Honesty and tickets:** ask for a newsletter form. The agent says it cannot add one and offers a ticket. Reply "yes" and it creates `CR-XXXX`. Open 🎫 Tickets, set the ticket to In progress, then ask the agent for the ticket's status.
+
 ## Testing
 
 **Deterministic tests: 52 tests, about 12 s, no GPU needed.** A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
@@ -75,4 +87,4 @@ Both models handle every scenario, including the atomic dark theme, the contrast
 
 This is a local portfolio demo, not a production system. It has no authentication, one shared site state, in-memory chat sessions, and no size limits on chat attachments yet. Uploaded text is untrusted prompt input. Text-to-speech sends reply text to an online service. A public deployment would need HTTPS, authentication, rate limits, upload limits and persistent per-user storage.
 
-More detail for developers is in [HANDOFF.md](HANDOFF.md). Licensed under the [MIT License](LICENSE).
+Architecture, data model, tools and gotchas are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Licensed under the [MIT License](LICENSE).
