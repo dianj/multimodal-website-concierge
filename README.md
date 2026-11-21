@@ -6,6 +6,21 @@ An agentic, multimodal CMS assistant that lets non-technical clients update thei
 
 Everything runs locally (LM Studio for the LLM, faster-whisper for speech recognition) except text-to-speech, which uses Microsoft Edge TTS.
 
+![The chat on the left changes the live preview on the right: dark green buttons, testimonials moved up, dark mode with a Light / Dark / Auto switcher](docs/screenshots/01-chat-and-preview.png)
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/02-guardrail.png" alt="The agent refuses a bright yellow button because white text on it would be unreadable, and proposes a darker shade"></td>
+<td width="50%"><img src="docs/screenshots/03-ticket.png" alt="The agent cannot add a newsletter form, offers a developer ticket and creates CR-0001 after the client agrees"></td>
+</tr>
+<tr>
+<td><b>Guardrail:</b> a bright yellow button fails the contrast check, so nothing is saved and the agent proposes a readable shade.</td>
+<td><b>Human in the loop:</b> the agent cannot build a newsletter form, so it offers a ticket and creates <code>CR-0001</code> only after the client says yes.</td>
+</tr>
+</table>
+
+<sub>Screenshots from a real session with Gemma 4 26B running in LM Studio; the tool calls shown in the chat are the ones the model made.</sub>
+
 ![Architecture](multimodal-website-concierge_diagram.svg)
 
 ## What it can do

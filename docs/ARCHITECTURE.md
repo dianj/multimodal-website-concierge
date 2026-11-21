@@ -67,6 +67,7 @@ This is a portfolio project. It simulates a **client-facing AI website maintenan
 | `.github/workflows/tests.yml` | CI: runs the deterministic tests on every push (Chromium, no GPU) |
 | `pytest.ini` | Test config; `live` marker excluded by default |
 | `multimodal-website-concierge_diagram.svg` | Architecture and chat-turn flow diagram |
+| `docs/screenshots/` | README screenshots from a real session with Gemma 4 26B |
 | `README.md` | Portfolio / GitHub description |
 | `sample_attachments/brand_guidelines_skill.md` | Example Skill file: forbidden colors, formal Bulgarian tone, auto-ticket on approval |
 | `sample_attachments/new_services_brief.txt` | Example content brief: three new services and new working hours |
