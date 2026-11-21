@@ -10,8 +10,8 @@ This is a portfolio project. It simulates a **client-facing AI website maintenan
 
 * The client opens a split-screen web app: an AI chat on the left and a live website preview on the right.
 * The client requests changes in natural language (typed or spoken), with screenshots, content briefs or Skill/brand-guideline files.
-* The LLM **never writes HTML/CSS**. It changes a validated JSON site state through 12 tools with guardrails. Every change is a new snapshot in SQLite, with Undo and Redo.
-* When the client approves, the agent creates a developer change-request ticket (`CR-XXXX`).
+* The LLM **never writes HTML/CSS**. It changes a validated JSON site state through 14 tools with guardrails. Every change is a new snapshot in SQLite, with Undo and Redo.
+* **Tickets (`CR-XXXX`):** when the client approves the site, the agent creates an approval ticket. When the client asks for something the tools cannot do (e.g. a newsletter form), the agent offers a feature-request ticket and creates it after the client agrees. Developers manage tickets in a panel; the agent can report a ticket's status.
 
 ---
 
@@ -19,11 +19,11 @@ This is a portfolio project. It simulates a **client-facing AI website maintenan
 
 1. **LM Studio**
    * The local server runs on **port 1235**, not the LM Studio default of 1234. Settings are under **Local Model API**.
-   * The app loads `gemma-4-26b-a4b-it` automatically on startup. `qwen3.8-27b` must be installed if it should appear in the model selector.
+   * The app loads `gemma-4-26b-a4b-it` automatically on startup. The model selector always lists Gemma and Qwen. If `qwen3.8-27b` is not installed in LM Studio, its option is disabled and marked "(not installed)".
 2. **Python 3.12** (the interpreter the app was tested with):
    ```powershell
-   pip install -r requirements.txt
    cd multimodal-website-concierge
+   pip install -r requirements.txt
    uvicorn server:app --host 127.0.0.1 --port 8000 --reload
    ```
    If port 8000 is already in use, pick another one, e.g. `--port 8001`.
@@ -47,12 +47,12 @@ This is a portfolio project. It simulates a **client-facing AI website maintenan
 
 | File | Purpose |
 |---|---|
-| `server.py` | FastAPI app: endpoints, agent loop, 12 tools and guardrails, SQLite versioning, LM Studio model manager, voice (STT and TTS) |
+| `server.py` | FastAPI app: endpoints, agent loop, 14 tools and guardrails, ticket system, SQLite versioning, LM Studio model manager, voice (STT and TTS) |
 | `index.html` | Single-page UI in vanilla JS: chat pane and live preview renderer. No build step. |
 | `website_cms.db` | SQLite database with `site_versions` and `change_tickets`. Holds demo data; can be deleted to reset. |
 | `requirements.txt` | Python dependencies. `av<19` is pinned on purpose (see §12). |
 | `requirements-dev.txt` | Test dependencies: pytest, pytest-playwright, httpx |
-| `tests/` | Deterministic tests with a scripted fake LM Studio: `test_tools.py` (unit), `test_api.py` (HTTP + agent loop), `e2e/test_ui.py` (Playwright) |
+| `tests/` | Deterministic tests with a scripted fake LM Studio: `test_tools.py` (unit), `test_api.py` (HTTP + agent loop), `test_tickets.py` (ticket tools, migration, API, agent flow), `e2e/test_ui.py` (Playwright) |
 | `evals/run_evals.py` | LLM evaluation against the real models in LM Studio; writes `evals/results/latest.md` |
 | `.github/workflows/tests.yml` | CI: runs the deterministic tests on every push (Chromium, no GPU) |
 | `pytest.ini` | Test config; `live` marker excluded by default |
@@ -73,7 +73,7 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 
 **One chat turn** (the same steps as in the diagram):
 1. `POST /api/chat` sends the message, an optional file and the `voice_mode` flag. A voice command is first transcribed through `POST /api/transcribe`.
-2. The agent loop builds the system prompt (base rules + capabilities + HONESTY/VERIFICATION rules + voice-mode rules when on + active Skills). It sends the prompt, the session history and the 12 tool schemas to the active model.
+2. The agent loop builds the system prompt (base rules + capabilities + HONESTY/VERIFICATION rules + voice-mode rules when on + active Skills). It sends the prompt, the session history and the 14 tool schemas to the active model.
 3. The model returns tool calls or a final reply. Tool calls are executed and their results sent back, up to `MAX_TOOL_ROUNDS = 8` rounds.
 4. Each tool validates its input, applies guardrails and saves a full JSON snapshot to `site_versions`.
 5. The tool result (`success`, `error` or `blocked_by_guardrail` with a reason) goes back to the model.
@@ -85,6 +85,17 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 * Each turn works on a copy of the history, so a failed LLM call never leaves a half-finished tool exchange.
 * Base64 screenshots are replaced by a placeholder after the turn, so they are not re-sent every turn.
 * Unknown tools, invalid JSON and wrong arguments return errors to the model instead of crashing.
+
+**HTTP endpoints:**
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /` | The page, with the injected build id |
+| `POST /api/chat` | Chat turn: `message`, optional `file`, `attachment_type`, `voice_mode` |
+| `GET /api/state` · `POST /api/undo` · `POST /api/redo` | Current site state and version history |
+| `GET /api/models` · `POST /api/model` | List the models and switch the loaded LLM |
+| `POST /api/transcribe` · `POST /api/tts` | Voice: audio → text, text → MP3 (`gender`, `brief`) |
+| `GET /api/tickets` · `GET /api/tickets/{CR-XXXX}` · `POST /api/tickets/{CR-XXXX}/status` | Ticket panel: list (with `open_count`), details, status change |
 
 ---
 
@@ -117,11 +128,15 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 
 **Database:**
 * `site_versions(version_id, timestamp, change_summary, state_json, status)`. Status values: `0` active, `1` undone (available for Redo), `2` discarded. A new change after Undo sets every undone row to discarded, so the rows are kept for auditing.
-* `change_tickets(ticket_id, created_at, version_id, ticket_markdown)`
+* `change_tickets(ticket_id, created_at, updated_at, version_id, type, title, details, status, priority, ticket_markdown)`.
+  * `type`: `approval` | `feature_request` | `support`
+  * `status`: `open` | `in_progress` | `done` | `rejected`
+  * `priority`: `low` | `normal` | `high`
+  * `init_db()` adds missing columns to old databases, where tickets were approval-only. Existing rows become open, normal-priority approval tickets.
 
 ---
 
-## 6. Agent tools (12)
+## 6. Agent tools (14)
 
 | Tool | What it does / key validation |
 |---|---|
@@ -136,7 +151,9 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 | `update_hero_image` | Sets the hero image; must be an `http(s)` URL |
 | `reorder_sections` | Must contain every section exactly once |
 | `rollback_version` | Non-destructive undo |
-| `create_approval_ticket` | Saves a `CR-XXXX` ticket with a summary and the approved JSON state |
+| `create_approval_ticket` | Approval ticket: summary + the approved JSON state |
+| `create_support_ticket` | `feature_request` or `support` ticket: title, client request, why the agent could not do it, optional partial work, priority. Only after the client agrees. |
+| `get_ticket_status` | One ticket by code (`CR-0003`, `3` or `cr-3`), or the 10 most recent tickets |
 
 **Contrast guardrails (all at least 4.5:1):**
 * text on background;
@@ -154,6 +171,7 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 * **Capabilities:** the prompt describes the slider, dark mode, theme, card and hover tools. Background and text colors must be changed in **one** call.
 * **Generated testimonials** must be flagged to the client as placeholder text.
 * **HONESTY:** for multi-part requests the agent reports only what the tools actually did and explicitly names what was not possible.
+* **TICKETS:** the agent offers a ticket when the tools cannot do something, creates it **only after the client agrees**, gives the `CR-XXXX` number, and uses `get_ticket_status` for status questions.
 * **VERIFICATION:** when asked to confirm a change, or when the user says they cannot see it, the agent must call `get_current_site_state` first. It then suggests Ctrl+F5 if the state is correct.
 * **Voice mode** (`VOICE_MODE_INSTRUCTIONS`, only when voice replies are on): 2–3 short sentences, no Markdown, hex codes or tool names.
 * **Active Skill files** are appended last and must be obeyed.
@@ -171,6 +189,12 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 * Model selector (Gemma / Qwen).
 * Bot replies are rendered as safe Markdown, built with DOM nodes only. Each reply has a "Read aloud" button.
 * An **"App updated → Reload" banner** appears when the page's injected `PAGE_BUILD` (the mtime of `index.html`) differs from the server's `app_build`. This catches tabs that still run old JavaScript.
+
+**Ticket panel** (🎫 Tickets button above the preview, with a red badge showing the number of open and in-progress tickets):
+* A side panel lists all tickets with their code, type, priority, date and site version.
+* Details are rendered as safe Markdown. A status dropdown lets the developer move a ticket through open → in progress → done / rejected.
+* The panel refreshes after every chat turn. Esc closes it.
+* It is the developer's view in this demo and has **no authentication**.
 
 **Preview:**
 * Renders the JSON state with `textContent`.
@@ -211,7 +235,7 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 
 ## 11. Tests and evals
 
-**Deterministic tests** (44: 21 unit, 11 API, 12 Playwright; about 10 s; no GPU and no LM Studio needed):
+**Deterministic tests** (52: 21 tool unit, 11 API, 7 ticket, 13 Playwright; about 12 s; no GPU and no LM Studio needed):
 ```powershell
 pip install -r requirements-dev.txt
 python -m pytest --browser-channel msedge   # local run on the installed Edge
@@ -228,13 +252,17 @@ python -m pytest                            # needs: python -m playwright instal
   * hover CSS on mouse-over;
   * the outdated-page banner;
   * the model selector;
-  * voice-reply requests (`/api/tts` is mocked through `page.route`).
+  * voice-reply requests (`/api/tts` is mocked through `page.route`);
+  * the ticket panel: badge, details, status change.
 * A mutation check was done: disabling `applyHoverStyles` makes the hover test fail.
 
-**LLM evals** (`python evals/run_evals.py`, LM Studio required, about 20 minutes for both models):
-* 16 real prompts in English and Bulgarian. Each runs on a fresh site in a throwaway database.
-* Each prompt is graded on the outcome (final JSON state, tools used, reply), not on wording. Examples: atomic dark theme, content brief, paragraph duplication, card outline, hover, contrast guardrail, honesty on partial requests, verification and the approval ticket.
+**LLM evals** (`python evals/run_evals.py`, LM Studio required, about 25 minutes for both models):
+* 19 real prompts in English and Bulgarian. Each runs on a fresh site in a throwaway database.
+* Each prompt is graded on the outcome (final JSON state, tools used, reply), not on wording. Examples: atomic dark theme, content brief, paragraph duplication, card outline, hover, contrast guardrail, honesty on partial requests, verification, the approval ticket, offering a ticket without creating it before consent, creating it after consent (multi-turn), and looking up a ticket's status.
 * Models are loaded one at a time through `switch_model`, and Gemma is loaded again at the end.
+* Outcomes are **pass**, **fail** (wrong behaviour) or **error** (LM Studio or infrastructure problem; not counted as a model failure). A case with an error is retried once, after reloading the model.
+* **Do not edit `.py` files while evals run** if a dev server with `--reload` is running. Its restart re-loads Gemma, which unloads the model under evaluation.
+* **Last run (2026-11-21):** Gemma 4 26B 19/19 (median 13.0 s per turn), Qwen 3.8 27B 19/19 (median 49.6 s). This was a single run with one attempt per case.
 * Results go to `evals/results/latest.md`, which is committed. A per-reply JSON file is also written but ignored by git.
 
 ## 12. Gotchas
@@ -257,7 +285,7 @@ python -m pytest                            # needs: python -m playwright instal
 6. **Slider:** "Add two more testimonials." The agent should flag them as placeholders.
 7. **Hover and cards:** "Add a lift-and-shadow hover to the service cards and a lighter outline in dark mode."
 8. **Voice:** turn on Voice replies, speak a command, and compare the male and female voices.
-9. **Honesty:** ask for something unsupported, such as a newsletter form. The agent should say so and offer a ticket.
+9. **Honesty and tickets:** ask for a newsletter form. The agent should say it cannot add one and offer a ticket. Reply "yes" and it creates `CR-XXXX`. Open 🎫 Tickets, set the ticket to In progress, then ask the agent for the ticket's status.
 
 ---
 
@@ -268,13 +296,13 @@ python -m pytest                            # needs: python -m playwright instal
 * Sessions (history, active Skills) are in memory and lost on restart.
 * Chat attachments (images, briefs, Skill files) have **no size limit or content validation** yet. Only voice audio is limited, to 15 MB.
 * Uploaded text and Skill files go straight into the prompt (prompt-injection surface). Guardrails in the tools limit the damage, because the model can only change validated fields.
-* There is no UI to view or download `CR-XXXX` tickets yet. They exist only in the database.
+* The ticket panel has no authentication and sends no notifications; anyone with access to the app can change a ticket's status.
 * The contrast check supports 6-digit hex only.
 * For public deployment the app still needs HTTPS, authentication, rate limits, security headers, upload limits and persistent per-user storage.
 
 ## 15. Ideas for next steps
 
-* A ticket viewer and download in the UI.
+* Ticket notifications (email or a Slack/Discord webhook) and a protected developer view.
 * Upload size and type limits for chat attachments.
 * Per-client site ownership and an approval workflow.
 * An EN/BG UI language toggle.

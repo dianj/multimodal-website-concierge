@@ -27,7 +27,7 @@ def test_model_receives_all_tools_and_capability_rules(client, fake_lm):
     fake_lm.script(reply="Hi")
     chat(client, "hello")
     request = fake_lm.requests[-1]
-    assert len(request["tools"]) == 12
+    assert len(request["tools"]) == 14
     prompt = fake_lm.last_system_prompt()
     assert "HONESTY" in prompt and "VERIFICATION" in prompt and "VOICE MODE" not in prompt
 

@@ -138,7 +138,7 @@ def test_bad_tool_calls_return_errors_instead_of_raising(srv):
 
 def test_every_tool_schema_has_an_implementation(srv):
     names = {tool["function"]["name"] for tool in srv.TOOLS_SCHEMA}
-    assert names == set(srv.AVAILABLE_FUNCTIONS) and len(names) == 12
+    assert names == set(srv.AVAILABLE_FUNCTIONS) and len(names) == 14
 
 
 def test_spoken_reply_is_trimmed_at_a_sentence_not_a_list_number(srv):

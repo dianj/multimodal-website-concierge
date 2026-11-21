@@ -19,7 +19,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import Callable, Optional
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -59,6 +59,14 @@ class Case:
     prompt: str
     check: Callable[[dict], bool]
     note: str
+    history: tuple = ()                      # earlier (role, text) turns for multi-turn cases
+    setup: Optional[Callable[[], None]] = None  # e.g. seed a ticket before the case runs
+
+
+def seed_in_progress_ticket():
+    server.create_support_ticket("Add a careers page", "A new careers page with job listings.",
+                                 "There is no tool for new pages.")
+    server.set_ticket_status(1, "in_progress")
 
 
 BRIEF = open(os.path.join(ROOT, "sample_attachments", "new_services_brief.txt"), encoding="utf-8").read()
@@ -74,8 +82,9 @@ CASES = [
          lambda r: r["state"]["section_order"].index("testimonials") < r["state"]["section_order"].index("services"),
          "testimonials ordered before services"),
     Case("dark-theme-atomic", "Make the whole site dark: a dark background with light text.",
-         lambda r: luminance(r["state"]["theme"]["background_color"]) < 0.2 and luminance(r["state"]["theme"]["text_color"]) > 0.6,
-         "dark background + light text in the light theme (needs one atomic call)"),
+         lambda r: (luminance(r["state"]["theme"]["background_color"]) < 0.2 and luminance(r["state"]["theme"]["text_color"]) > 0.6)
+         or (r["state"]["theme"]["dark_mode"]["enabled"] and r["state"]["theme"]["dark_mode"]["default_mode"] == "dark"),
+         "site shows dark background + light text by default (theme change in one call, or dark mode on by default)"),
     Case("dark-mode-switcher", "Add dark mode with a Light / Dark / Auto switcher in a separate bar at the top of the site.",
          lambda r: r["state"]["theme"]["dark_mode"]["enabled"] and r["state"]["theme"]["dark_mode"]["switcher_position"] == "top_bar",
          "dark mode enabled, switcher in top bar"),
@@ -114,7 +123,20 @@ CASES = [
          "reads the state before answering"),
     Case("approval-ticket", "I'm happy with how the site looks now. Please approve it and send it to the developers.",
          lambda r: called(r, "create_approval_ticket"),
-         "creates the CR ticket on approval"),
+         "creates the approval ticket on approval"),
+    Case("ticket-offer-needs-consent", "Please add a newsletter signup form with an email field at the bottom of the page.",
+         lambda r: not called(r, "create_support_ticket") and not server.list_tickets() and mentions(r["reply"], "ticket"),
+         "offers a developer ticket but does not create it without consent"),
+    Case("ticket-created-on-consent", "Yes, please create the ticket.",
+         lambda r: called(r, "create_support_ticket") and any(t["type"] == "feature_request" for t in server.list_tickets())
+         and "CR-0001" in r["reply"],
+         "creates a feature-request ticket after the client agrees and gives its number",
+         history=(("user", "Please add a newsletter signup form with an email field at the bottom of the page."),
+                  ("assistant", "I can't add forms with my current tools. Would you like me to create a developer ticket for it?"))),
+    Case("ticket-status", "What's the status of my ticket CR-0001?",
+         lambda r: called(r, "get_ticket_status") and mentions(r["reply"], "in progress", "in_progress"),
+         "looks up the real ticket status",
+         setup=seed_in_progress_ticket),
 ]
 
 
@@ -126,14 +148,18 @@ def reset_site():
 
 def run_case(model, case):
     reset_site()
-    history = [{"role": "user", "content": [{"type": "text", "text": case.prompt}]}]
+    if case.setup:
+        case.setup()
+    history = [{"role": role, "content": [{"type": "text", "text": text}] if role == "user" else text}
+               for role, text in case.history]
+    history.append({"role": "user", "content": [{"type": "text", "text": case.prompt}]})
     tools = []
     started = time.time()
     try:
         msg = server.run_llm_turn(model, [], history, tools)
         reply = msg.content or ""
         error = None
-    except Exception as e:  # count infrastructure errors as failures, but keep going
+    except Exception as e:
         reply, error = "", str(e)
     seconds = time.time() - started
     run = {"reply": reply, "tools": tools, "state": server.get_latest_state()[1], "seconds": seconds, "error": error}
@@ -141,8 +167,19 @@ def run_case(model, case):
         passed = error is None and bool(case.check(run))
     except Exception as e:
         passed, run["error"] = False, f"check failed: {e}"
-    return {"case": case.id, "passed": passed, **{k: v for k, v in run.items() if k != "state"},
+    # An LLM/infrastructure error (e.g. LM Studio unloaded the model) is not a model failure.
+    outcome = "pass" if passed else ("error" if error and not error.startswith("check failed") else "fail")
+    return {"case": case.id, "passed": passed, "outcome": outcome, **{k: v for k, v in run.items() if k != "state"},
             "final_state": run["state"]}
+
+
+def run_case_with_retry(model, case):
+    """Retry once after an infrastructure error, reloading the model if LM Studio dropped it."""
+    result = run_case(model, case)
+    if result["outcome"] == "error":
+        server.switch_model(model)
+        result = run_case(model, case)
+    return result
 
 
 def main():
@@ -162,9 +199,9 @@ def main():
             continue
         results[model] = []
         for case in cases:
-            r = run_case(model, case)
+            r = run_case_with_retry(model, case)
             results[model].append(r)
-            print(f"    {'PASS' if r['passed'] else 'FAIL'}  {case.id:<22} {r['seconds']:5.1f}s  tools={len(r['tools'])}", flush=True)
+            print(f"    {r['outcome'].upper():<5} {case.id:<27} {r['seconds']:5.1f}s  tools={len(r['tools'])}", flush=True)
 
     server.switch_model(server.MODEL_NAME)  # leave LM Studio with the default model loaded
 
@@ -176,17 +213,20 @@ def main():
     lines = [f"# Eval results ({stamp})", "",
              f"{len(cases)} cases, one fresh site per case, graded on the final state / tools / reply. "
              "Generated by `python evals/run_evals.py`.", "",
-             "| Model | Passed | Median time per turn |", "|---|---|---|"]
+             "| Model | Passed | Infra errors | Median time per turn |", "|---|---|---|---|"]
     for model, rows in results.items():
-        passed = sum(r["passed"] for r in rows)
-        lines.append(f"| {labels.get(model, model)} | **{passed}/{len(rows)}** | {statistics.median(r['seconds'] for r in rows):.1f} s |")
-    lines += ["", "| Case | What is checked | " + " | ".join(labels.get(m, m) for m in results) + " |",
+        passed = sum(r["outcome"] == "pass" for r in rows)
+        errors = sum(r["outcome"] == "error" for r in rows)
+        lines.append(f"| {labels.get(model, model)} | **{passed}/{len(rows)}** | {errors} | "
+                     f"{statistics.median(r['seconds'] for r in rows):.1f} s |")
+    lines += ["", "✅ pass · ❌ wrong behaviour · ⚠️ LM Studio / infrastructure error (not counted as a model failure)",
+              "", "| Case | What is checked | " + " | ".join(labels.get(m, m) for m in results) + " |",
               "|---|---|" + "---|" * len(results)]
     for case in cases:
         cells = []
         for model in results:
             r = next(x for x in results[model] if x["case"] == case.id)
-            cells.append("✅" if r["passed"] else "❌")
+            cells.append({"pass": "✅", "fail": "❌", "error": "⚠️"}[r["outcome"]])
         lines.append(f"| `{case.id}` | {case.note} | " + " | ".join(cells) + " |")
     with open(os.path.join(RESULTS_DIR, "latest.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")

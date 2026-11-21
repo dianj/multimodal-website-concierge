@@ -109,6 +109,22 @@ SWITCHER_POSITIONS = ("corner", "top_bar", "contact")
 DARK_DEFAULT_MODES = ("auto", "light", "dark")
 MAX_TESTIMONIALS = 10
 
+# --- Tickets ---
+# approval        = the client approved the current site; developers receive the JSON state.
+# feature_request = something the agent cannot do with its tools (e.g. a newsletter form).
+# support         = a problem or question that needs a human.
+TICKET_TYPES = ("approval", "feature_request", "support")
+TICKET_STATUSES = ("open", "in_progress", "done", "rejected")
+TICKET_PRIORITIES = ("low", "normal", "high")
+TICKET_COLUMNS = {
+    "type": "TEXT NOT NULL DEFAULT 'approval'",
+    "title": "TEXT",
+    "details": "TEXT",
+    "status": "TEXT NOT NULL DEFAULT 'open'",
+    "priority": "TEXT NOT NULL DEFAULT 'normal'",
+    "updated_at": "TEXT",
+}
+
 DEFAULT_SITE_STATE = {
     "theme": {
         "primary_color": "#2563eb",
@@ -170,6 +186,11 @@ def init_db():
     columns = [row[1] for row in conn.execute("PRAGMA table_info(site_versions)")]
     if "status" not in columns:
         conn.execute("ALTER TABLE site_versions ADD COLUMN status INTEGER NOT NULL DEFAULT 0")
+    # Ticket fields added after the first version of the table (approval-only tickets).
+    ticket_columns = [row[1] for row in conn.execute("PRAGMA table_info(change_tickets)")]
+    for name, ddl in TICKET_COLUMNS.items():
+        if name not in ticket_columns:
+            conn.execute(f"ALTER TABLE change_tickets ADD COLUMN {name} {ddl}")
     count = conn.execute("SELECT COUNT(*) FROM site_versions").fetchone()[0]
     if count == 0:
         conn.execute(
@@ -569,16 +590,110 @@ def redo_version():
     conn.close()
     return json.dumps({"status": "success", "restored_version": row[0]})
 
-def create_approval_ticket(summary_notes: str):
-    ver_id, state = get_latest_state()
-    ticket_md = f"# Approved Client Change Request (Version v{ver_id})\n\n**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n**Summary:** {summary_notes}\n\n```json\n{json.dumps(state, indent=2, ensure_ascii=False)}\n```"
+def ticket_code(ticket_id: int) -> str:
+    return f"CR-{ticket_id:04d}"
+
+def insert_ticket(ticket_type: str, title: str, details: str, priority: str, version_id: int, markdown: str) -> int:
+    now = datetime.now().isoformat()
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
-    cur.execute("INSERT INTO change_tickets (created_at, version_id, ticket_markdown) VALUES (?, ?, ?)", (datetime.now().isoformat(), ver_id, ticket_md))
-    t_id = cur.lastrowid
+    cur.execute(
+        "INSERT INTO change_tickets (created_at, updated_at, version_id, ticket_markdown, type, title, details, status, priority) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)",
+        (now, now, version_id, markdown, ticket_type, title, details, priority)
+    )
+    ticket_id = cur.lastrowid
     conn.commit()
     conn.close()
-    return json.dumps({"status": "ticket_created", "ticket_id": f"CR-{t_id:04d}", "version": ver_id})
+    return ticket_id
+
+def list_tickets(limit: int = 50) -> list:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT ticket_id, created_at, updated_at, version_id, type, title, status, priority "
+        "FROM change_tickets ORDER BY ticket_id DESC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [{**dict(r), "code": ticket_code(r["ticket_id"])} for r in rows]
+
+def get_ticket(ticket_id: int):
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT * FROM change_tickets WHERE ticket_id = ?", (ticket_id,)).fetchone()
+    conn.close()
+    return {**dict(row), "code": ticket_code(row["ticket_id"])} if row else None
+
+def parse_ticket_id(value) -> int:
+    """Accept 'CR-0007', '7' or 7."""
+    match = re.fullmatch(r"(?:CR-)?0*(\d+)", str(value).strip(), flags=re.IGNORECASE)
+    if not match:
+        raise ValueError("ticket_id must look like 'CR-0007'.")
+    return int(match.group(1))
+
+def set_ticket_status(ticket_id: int, status: str) -> bool:
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.execute(
+        "UPDATE change_tickets SET status = ?, updated_at = ? WHERE ticket_id = ?",
+        (status, datetime.now().isoformat(), ticket_id)
+    )
+    conn.commit()
+    conn.close()
+    return cur.rowcount == 1
+
+def create_approval_ticket(summary_notes: str):
+    ver_id, state = get_latest_state()
+    summary = normalize_text(str(summary_notes), True)[:2000]
+    ticket_md = (
+        f"# Approved Client Change Request (Version v{ver_id})\n\n"
+        f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n**Summary:** {summary}\n\n"
+        f"```json\n{json.dumps(state, indent=2, ensure_ascii=False)}\n```"
+    )
+    t_id = insert_ticket("approval", f"Approved website changes (v{ver_id})", summary, "normal", ver_id, ticket_md)
+    return json.dumps({"status": "ticket_created", "ticket_id": ticket_code(t_id), "type": "approval", "version": ver_id})
+
+def create_support_ticket(title: str, client_request: str, reason: str, ticket_type: str = "feature_request",
+                          priority: str = "normal", partial_work: str = None):
+    if ticket_type not in ("feature_request", "support"):
+        return json.dumps({"status": "error", "message": "ticket_type must be 'feature_request' or 'support'."})
+    if priority not in TICKET_PRIORITIES:
+        return json.dumps({"status": "error", "message": f"priority must be one of {list(TICKET_PRIORITIES)}."})
+    fields = {"title": title, "client_request": client_request, "reason": reason}
+    if any(not isinstance(v, str) or not v.strip() for v in fields.values()):
+        return json.dumps({"status": "error", "message": "title, client_request and reason must be non-empty strings."})
+    title = normalize_text(title, False)[:120]
+    client_request = normalize_text(client_request, True)[:2000]
+    reason = normalize_text(reason, True)[:1000]
+    partial = normalize_text(partial_work, True)[:1000] if isinstance(partial_work, str) and partial_work.strip() else None
+    ver_id, _ = get_latest_state()
+    details = f"Client request: {client_request}\n\nWhy the assistant could not do it: {reason}"
+    if partial:
+        details += f"\n\nAlready done by the assistant: {partial}"
+    label = "Feature Request" if ticket_type == "feature_request" else "Support Request"
+    ticket_md = (
+        f"# {label}: {title}\n\n**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')} · **Priority:** {priority} · "
+        f"**Site version:** v{ver_id}\n\n## Client request\n{client_request}\n\n"
+        f"## Why the assistant could not do it\n{reason}\n"
+        + (f"\n## Already done by the assistant\n{partial}\n" if partial else "")
+    )
+    t_id = insert_ticket(ticket_type, title, details, priority, ver_id, ticket_md)
+    return json.dumps({"status": "ticket_created", "ticket_id": ticket_code(t_id), "type": ticket_type,
+                       "priority": priority, "ticket_status": "open"})
+
+def get_ticket_status(ticket_id: str = None):
+    if ticket_id:
+        try:
+            ticket = get_ticket(parse_ticket_id(ticket_id))
+        except ValueError as e:
+            return json.dumps({"status": "error", "message": str(e)})
+        if not ticket:
+            return json.dumps({"status": "error", "message": f"Ticket {ticket_id} does not exist."})
+        keys = ("code", "type", "title", "status", "priority", "created_at", "updated_at", "details")
+        return json.dumps({"status": "success", "ticket": {k: ticket[k] for k in keys}})
+    tickets = list_tickets(limit=10)
+    return json.dumps({"status": "success", "tickets": [
+        {k: t[k] for k in ("code", "type", "title", "status", "priority", "created_at")} for t in tickets
+    ]})
 
 TOOLS_SCHEMA = [
     {"type": "function", "function": {"name": "get_current_site_state", "description": "Inspect current website texts, colors, images, and section layout.", "parameters": {"type": "object", "properties": {}}}},
@@ -592,7 +707,9 @@ TOOLS_SCHEMA = [
     {"type": "function", "function": {"name": "update_hero_image", "description": "Change the main hero banner image URL.", "parameters": {"type": "object", "properties": {"image_url": {"type": "string"}}, "required": ["image_url"]}}},
     {"type": "function", "function": {"name": "reorder_sections", "description": "Reorder page sections. Must contain all 4: ['hero', 'services', 'testimonials', 'contact'].", "parameters": {"type": "object", "properties": {"new_order": {"type": "array", "items": {"type": "string"}}}, "required": ["new_order"]}}},
     {"type": "function", "function": {"name": "rollback_version", "description": "Undo the last website change and restore previous version.", "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {"name": "create_approval_ticket", "description": "Generate an official developer handoff ticket when the client approves the changes.", "parameters": {"type": "object", "properties": {"summary_notes": {"type": "string"}}, "required": ["summary_notes"]}}}
+    {"type": "function", "function": {"name": "create_approval_ticket", "description": "Create an approval ticket (type approval) for the developers when the client says they are happy with / approve the current website. It includes the full approved site state.", "parameters": {"type": "object", "properties": {"summary_notes": {"type": "string"}}, "required": ["summary_notes"]}}},
+    {"type": "function", "function": {"name": "create_support_ticket", "description": "Create a developer ticket for something you cannot do with your tools (feature_request, e.g. a newsletter form, a new page or section type, custom code) or a problem that needs a human (support). Only call it after the client has agreed to create a ticket. Then tell the client the ticket number.", "parameters": {"type": "object", "properties": {"title": {"type": "string", "description": "Short title, e.g. 'Add a newsletter signup form'."}, "client_request": {"type": "string", "description": "What the client asked for, in detail and in their own terms."}, "reason": {"type": "string", "description": "Why it cannot be done with the available tools."}, "ticket_type": {"type": "string", "enum": ["feature_request", "support"]}, "priority": {"type": "string", "enum": ["low", "normal", "high"]}, "partial_work": {"type": "string", "description": "Optional: related changes you already applied."}}, "required": ["title", "client_request", "reason"]}}},
+    {"type": "function", "function": {"name": "get_ticket_status", "description": "Look up developer tickets. With ticket_id (e.g. 'CR-0003') returns that ticket's status and details; without it, lists the 10 most recent tickets. Use it when the client asks about a ticket or its progress.", "parameters": {"type": "object", "properties": {"ticket_id": {"type": "string"}}}}},
 ]
 
 AVAILABLE_FUNCTIONS = {
@@ -607,7 +724,9 @@ AVAILABLE_FUNCTIONS = {
     "update_hero_image": update_hero_image,
     "reorder_sections": reorder_sections,
     "rollback_version": rollback_version,
-    "create_approval_ticket": create_approval_ticket
+    "create_approval_ticket": create_approval_ticket,
+    "create_support_ticket": create_support_ticket,
+    "get_ticket_status": get_ticket_status,
 }
 
 sessions = {}
@@ -748,6 +867,11 @@ def build_system_prompt(active_skills, voice_mode: bool = False):
         "- HONESTY: when a request has several parts, check each part against what the tools actually did (read the tool results). "
         "Report only what was really implemented. If any part could not be done or was only approximated, say so explicitly "
         "(e.g. 'Done: X and Y. Not possible with my tools: Z') and offer a developer ticket for it. Never imply a feature exists if no tool created it.\n"
+        "- TICKETS: when something cannot be done with your tools, offer to create a developer ticket. Create it with "
+        "create_support_ticket ONLY after the client agrees (e.g. 'yes', 'please do'); include what they asked for, why you "
+        "could not do it, and any related changes you already made. Then give them the ticket number (CR-XXXX). "
+        "When the client approves the finished website, use create_approval_ticket. "
+        "For questions about a ticket or its progress, call get_ticket_status and report the real status.\n"
         "- VERIFICATION: when the client asks you to confirm or check a change, or says they do not see it, ALWAYS call get_current_site_state first "
         "and report the actual stored values. Never claim something is confirmed without that call in the same turn. "
         "You cannot see the client's screen: if the stored state is correct but they do not see it, suggest reloading the page (Ctrl+F5), "
@@ -997,6 +1121,35 @@ def api_select_model(model: str = Form(...)):
         return JSONResponse({"status": "error", "message": "Another model switch is already in progress."}, status_code=409)
     result = switch_model(model)
     return JSONResponse(result, status_code=200 if result["status"] == "success" else 500)
+
+# --- Ticket panel (developer view in the demo) ---
+@app.get("/api/tickets")
+def api_tickets():
+    tickets = list_tickets()
+    open_count = sum(t["status"] in ("open", "in_progress") for t in tickets)
+    return JSONResponse({"tickets": tickets, "open_count": open_count})
+
+@app.get("/api/tickets/{ticket_ref}")
+def api_ticket(ticket_ref: str):
+    try:
+        ticket = get_ticket(parse_ticket_id(ticket_ref))
+    except ValueError as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+    if not ticket:
+        return JSONResponse({"status": "error", "message": "Ticket not found."}, status_code=404)
+    return JSONResponse(ticket)
+
+@app.post("/api/tickets/{ticket_ref}/status")
+def api_ticket_status(ticket_ref: str, status: str = Form(...)):
+    if status not in TICKET_STATUSES:
+        return JSONResponse({"status": "error", "message": f"status must be one of {list(TICKET_STATUSES)}."}, status_code=400)
+    try:
+        ticket_id = parse_ticket_id(ticket_ref)
+    except ValueError as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=400)
+    if not set_ticket_status(ticket_id, status):
+        return JSONResponse({"status": "error", "message": "Ticket not found."}, status_code=404)
+    return JSONResponse({"status": "success", "ticket": get_ticket(ticket_id)})
 
 @app.post("/api/redo")
 async def api_redo():

@@ -117,6 +117,30 @@ def test_voice_reply_uses_selected_gender_and_brief_mode(page: Page, app_url, fa
     assert "VOICE MODE IS ON" in fake_lm.last_system_prompt()
 
 
+def test_ticket_panel_shows_new_ticket_and_updates_status(page: Page, app_url, fake_lm, srv):
+    fake_lm.script(("create_support_ticket", {"title": "Newsletter signup form",
+                                              "client_request": "Add a newsletter form with an email field.",
+                                              "reason": "No tool can add forms.", "priority": "high"}),
+                   reply="Created ticket CR-0001.")
+    open_app(page, app_url)
+    expect(page.locator("#ticketBadge")).to_be_hidden()
+    send(page, "Yes, please create a ticket")
+    expect(page.locator("#ticketBadge")).to_have_text("1")
+
+    page.get_by_role("button", name="Tickets").click()
+    card = page.locator(".ticket-card", has_text="CR-0001")
+    expect(card).to_contain_text("Newsletter signup form")
+    expect(card.locator(".ticket-type")).to_have_text("Feature request")
+    card.get_by_role("button", name="Show details").click()
+    expect(card.locator(".ticket-details")).to_contain_text("No tool can add forms.")
+
+    card.get_by_label("Status of CR-0001").select_option("done")
+    expect(page.locator("#ticketBadge")).to_be_hidden()   # no open tickets left
+    assert srv.get_ticket(1)["status"] == "done"
+    page.keyboard.press("Escape")
+    expect(page.locator("#ticketPanel")).to_be_hidden()
+
+
 # --- Live website preview --------------------------------------------------------------
 
 def test_undo_and_redo_buttons(page: Page, app_url, fake_lm):
