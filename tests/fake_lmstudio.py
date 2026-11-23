@@ -22,6 +22,7 @@ class FakeLMStudio:
         self.requests = []       # recorded /v1/chat/completions payloads
         self.loaded = {"gemma-4-26b-a4b-it"}
         self.fail_count = 0      # simulate an LLM outage: answer the next N completions with HTTP 500
+        self.delay_s = 0         # simulate a slow model: wait this long before answering a completion
         self.lock = threading.Lock()
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         self.port = self.server.server_address[1]
@@ -44,6 +45,7 @@ class FakeLMStudio:
             self.queue.clear()
             self.requests.clear()
             self.fail_count = 0
+            self.delay_s = 0
 
     def script(self, *tool_calls, reply="Done."):
         """Queue one turn: optional tool calls [(name, args), ...] followed by a final text reply."""
@@ -105,7 +107,9 @@ class FakeLMStudio:
                     if fake.fail_count > 0:
                         fake.fail_count -= 1
                         return self._send(500, {"error": "simulated outage"})
-                    msg = fake._next_message()
+                    msg = fake._next_message()  # taken before the delay, so a late answer cannot steal the next one
+                    if fake.delay_s:
+                        time.sleep(fake.delay_s)
                     message = {"role": "assistant", "content": msg.get("content")}
                     if msg.get("tool_calls"):
                         message["tool_calls"] = msg["tool_calls"]

@@ -1,10 +1,10 @@
 """The agent: system prompt, the tool-calling loop and chat-history helpers."""
 from openai import OpenAI
 
-from .config import LLM_BASE_URL, MAX_TOOL_ROUNDS
+from .config import LLM_BASE_URL, LLM_TIMEOUT_SECONDS, MAX_TOOL_ROUNDS
 from .registry import TOOLS_SCHEMA, execute_tool_call
 
-llm_client = OpenAI(base_url=LLM_BASE_URL, api_key="lm-studio")
+llm_client = OpenAI(base_url=LLM_BASE_URL, api_key="lm-studio", timeout=LLM_TIMEOUT_SECONDS)
 
 def build_system_prompt(active_skills, voice_mode: bool = False):
     base = (

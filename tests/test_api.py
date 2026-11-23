@@ -76,6 +76,20 @@ def test_llm_outage_does_not_corrupt_the_session(client, fake_lm, srv):
     assert [m["role"] for m in history] == ["user", "assistant"]  # failed turn left nothing behind
 
 
+def test_llm_timeout_ends_the_turn_cleanly(client, fake_lm, srv, monkeypatch):
+    assert agent.llm_client.timeout == config.LLM_TIMEOUT_SECONDS  # the setting reaches the client
+    monkeypatch.setattr(agent, "llm_client", agent.llm_client.with_options(timeout=0.3, max_retries=0))
+    fake_lm.delay_s = 2
+    data = chat(client, "first")
+    assert "did not answer within 0.3 seconds" in data["reply"]
+    assert "Cannot reach LM Studio" not in data["reply"]
+    fake_lm.delay_s = 0
+    fake_lm.script(reply="Back online.")
+    assert chat(client, "second")["reply"] == "Back online."
+    history = next(iter(srv.sessions.values()))["chat_history"]
+    assert [m["role"] for m in history] == ["user", "assistant"]  # the timed-out turn left nothing behind
+
+
 def test_tool_loop_is_capped(client, fake_lm):
     fake_lm.script_tool_loop("get_current_site_state", {}, rounds=config.MAX_TOOL_ROUNDS + 1)
     data = chat(client, "loop forever")

@@ -11,6 +11,8 @@ ALLOWED_MODELS = [
 MODEL_NAME = os.environ.get("LLM_MODEL", ALLOWED_MODELS[0][0])
 LOAD_CONTEXT_LENGTH = int(os.environ.get("LLM_CONTEXT_LENGTH", "16384"))
 MODEL_LOAD_TIMEOUT = 600
+# Seconds to wait for one model answer; a slower answer ends the turn with a friendly message.
+LLM_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
 
 # --- VOICE ---
 # Speech-to-text runs locally with faster-whisper on the CPU (the GPU is reserved for the LLM).

@@ -13,8 +13,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from openai import APIConnectionError
+from openai import APIConnectionError, APITimeoutError
 
+from concierge import agent
 from concierge.agent import run_llm_turn, strip_images_from_history
 from concierge.config import (ALLOWED_MODELS, DEFAULT_VOICE_GENDER, INDEX_PATH, LLM_BASE_URL, MAX_AUDIO_BYTES,
                               MAX_BRIEF_TTS_CHARS, MAX_TTS_CHARS)
@@ -239,6 +240,11 @@ async def api_chat(
         strip_images_from_history(turn_history)
         chat_history[:] = turn_history
 
+    except APITimeoutError:  # a subclass of APIConnectionError, so it must come first
+        bot_reply = (
+            f"The model '{active_model}' did not answer within {agent.llm_client.timeout:g} seconds. "
+            "Nothing was changed; please try again, or try a shorter request."
+        )
     except APIConnectionError:
         bot_reply = (
             f"Cannot reach LM Studio at {LLM_BASE_URL}. Make sure LM Studio is running, "

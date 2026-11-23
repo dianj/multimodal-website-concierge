@@ -58,7 +58,7 @@ Python · FastAPI · SQLite · vanilla HTML/CSS/JS · LM Studio (OpenAI-compatib
    ```
 3. Open `http://localhost:8000`. Try the files in `sample_attachments/`, or turn on 🔊 Voice replies and use the 🎤 button.
 
-Configuration through environment variables: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_CONTEXT_LENGTH`, `WHISPER_MODEL`. Delete `website_cms.db` to reset the demo site.
+Configuration through environment variables: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_CONTEXT_LENGTH`, `LLM_TIMEOUT_SECONDS` (default 120), `WHISPER_MODEL`. Delete `website_cms.db` to reset the demo site.
 
 ### Things to try
 
@@ -74,12 +74,12 @@ Configuration through environment variables: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_C
 
 ## Testing
 
-**Deterministic tests: 52 tests, about 12 s, no GPU needed.** A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
+**Deterministic tests: 53 tests, about 12 s, no GPU needed.** A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
 
 | Suite | What it covers |
 |---|---|
 | `tests/test_tools.py` (21) | Guardrails (contrast, mandatory fields, whitelists), atomic theme changes, paragraphs, slider data, Undo/Redo branches, migration of old snapshots |
-| `tests/test_api.py` (11) | Full chat turns over HTTP: tool execution, guardrail results passed back to the model, Skill injection, screenshots dropped from history, recovery after an LLM outage, tool-loop cap, model switching |
+| `tests/test_api.py` (12) | Full chat turns over HTTP: tool execution, guardrail results passed back to the model, Skill injection, screenshots dropped from history, recovery after an LLM outage or timeout, tool-loop cap, model switching |
 | `tests/test_tickets.py` (7) | Ticket tools and validation, migration of the old ticket table, ticket API, and the full agent flow: offer → client agrees → ticket created → developer updates the status → the agent reports it |
 | `tests/e2e/test_ui.py` (13, Playwright) | Enter/Shift+Enter, Markdown XSS safety, Undo/Redo, slider, Light/Dark/Auto following the OS setting, hover effects on mouse-over, outdated-page banner, model selector, voice-reply requests, ticket panel |
 
