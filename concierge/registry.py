@@ -2,9 +2,19 @@
 import json
 
 from .tickets import create_approval_ticket, create_support_ticket, get_ticket_status
-from .tools import (configure_dark_mode, get_current_site_state, reorder_sections, rollback_version,
-                    update_card_style, update_hero_image, update_hover_effect, update_services_list,
-                    update_testimonials, update_text_content, update_theme_style)
+from .tools import (
+    configure_dark_mode,
+    get_current_site_state,
+    reorder_sections,
+    rollback_version,
+    update_card_style,
+    update_hero_image,
+    update_hover_effect,
+    update_services_list,
+    update_testimonials,
+    update_text_content,
+    update_theme_style,
+)
 
 TOOLS_SCHEMA = [
     {"type": "function", "function": {"name": "get_current_site_state", "description": "Inspect current website texts, colors, images, and section layout.", "parameters": {"type": "object", "properties": {}}}},

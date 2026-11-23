@@ -41,5 +41,6 @@ def palette_guardrail(palette: dict, label: str):
     # The CTA button renders white text on primary_color, so that pair must stay readable too.
     ratio = color_contrast_ratio(palette["primary_color"], "#ffffff")
     if ratio < 4.5:
-        return f"{label}: primary_color has {ratio:.2f}:1 contrast with the white button text, it must be at least 4.5:1. Choose a darker shade."
+        return (f"{label}: primary_color has {ratio:.2f}:1 contrast with the white button text, "
+                "it must be at least 4.5:1. Choose a darker shade.")
     return None

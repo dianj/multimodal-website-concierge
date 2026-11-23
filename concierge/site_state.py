@@ -62,7 +62,8 @@ DEFAULT_SITE_STATE = {
         "testimonials": {
             "heading": "What Clients Say",
             "items": [
-                {"quote": "Working with this team transformed our online presence in just three weeks!", "author": "Elena Petrova, CEO at TechStart"}
+                {"quote": "Working with this team transformed our online presence in just three weeks!",
+                 "author": "Elena Petrova, CEO at TechStart"}
             ],
             "autoplay_seconds": 6
         },

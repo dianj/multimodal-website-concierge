@@ -17,9 +17,9 @@ import statistics
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -60,7 +60,7 @@ class Case:
     check: Callable[[dict], bool]
     note: str
     history: tuple = ()                      # earlier (role, text) turns for multi-turn cases
-    setup: Optional[Callable[[], None]] = None  # e.g. seed a ticket before the case runs
+    setup: Callable[[], None] | None = None  # e.g. seed a ticket before the case runs
 
 
 def seed_in_progress_ticket():

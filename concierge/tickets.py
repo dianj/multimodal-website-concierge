@@ -22,7 +22,8 @@ def insert_ticket(ticket_type: str, title: str, details: str, priority: str, ver
     conn = connect()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO change_tickets (created_at, updated_at, version_id, ticket_markdown, type, title, details, status, priority) "
+        "INSERT INTO change_tickets "
+        "(created_at, updated_at, version_id, ticket_markdown, type, title, details, status, priority) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)",
         (now, now, version_id, markdown, ticket_type, title, details, priority)
     )
@@ -74,7 +75,8 @@ def create_approval_ticket(summary_notes: str):
         f"```json\n{json.dumps(state, indent=2, ensure_ascii=False)}\n```"
     )
     t_id = insert_ticket("approval", f"Approved website changes (v{ver_id})", summary, "normal", ver_id, ticket_md)
-    return json.dumps({"status": "ticket_created", "ticket_id": ticket_code(t_id), "type": "approval", "version": ver_id})
+    return json.dumps({"status": "ticket_created", "ticket_id": ticket_code(t_id), "type": "approval",
+                       "version": ver_id})
 
 def create_support_ticket(title: str, client_request: str, reason: str, ticket_type: str = "feature_request",
                           priority: str = "normal", partial_work: str = None):
@@ -88,7 +90,8 @@ def create_support_ticket(title: str, client_request: str, reason: str, ticket_t
     title = normalize_text(title, False)[:120]
     client_request = normalize_text(client_request, True)[:2000]
     reason = normalize_text(reason, True)[:1000]
-    partial = normalize_text(partial_work, True)[:1000] if isinstance(partial_work, str) and partial_work.strip() else None
+    has_partial = isinstance(partial_work, str) and partial_work.strip()
+    partial = normalize_text(partial_work, True)[:1000] if has_partial else None
     ver_id, _ = get_latest_state()
     details = f"Client request: {client_request}\n\nWhy the assistant could not do it: {reason}"
     if partial:

@@ -3,8 +3,15 @@ import asyncio
 import re
 import threading
 
-from .config import (DEFAULT_VOICE_GENDER, PRIMARY_LANGUAGE, SUPPORTED_LANGUAGES, TTS_ATTEMPT_TIMEOUT, TTS_VOICES,
-                     WHISPER_MODEL_SIZE, WHISPER_PROMPTS)
+from .config import (
+    DEFAULT_VOICE_GENDER,
+    PRIMARY_LANGUAGE,
+    SUPPORTED_LANGUAGES,
+    TTS_ATTEMPT_TIMEOUT,
+    TTS_VOICES,
+    WHISPER_MODEL_SIZE,
+    WHISPER_PROMPTS,
+)
 
 _whisper_model = None
 _whisper_lock = threading.Lock()
@@ -91,7 +98,7 @@ async def synthesize_speech(spoken: str, gender: str):
             if audio:
                 return audio, None
             last_error = "empty audio"
-        except asyncio.TimeoutError:
+        except TimeoutError:
             last_error = f"timeout after {TTS_ATTEMPT_TIMEOUT}s"
         except Exception as e:
             last_error = e

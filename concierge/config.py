@@ -36,11 +36,13 @@ SUPPORTED_LANGUAGES = ("en", "bg")
 WHISPER_PROMPTS = {
     "en": (
         "Website editing commands: change the color, primary color, background, text, heading, subtitle, "
-        "paragraph, section, services, testimonials, slider, dark mode, contact, working hours, button, image, reorder, undo, approve."
+        "paragraph, section, services, testimonials, slider, dark mode, contact, working hours, button, image, "
+        "reorder, undo, approve."
     ),
     "bg": (
         "Команди за редакция на уебсайт: смени цвета, основен цвят, фон, текст, заглавие, подзаглавие, "
-        "параграф, секция, услуги, отзиви, слайдер, тъмен режим, контакти, работно време, бутон, снимка, подредба, отмени, одобри."
+        "параграф, секция, услуги, отзиви, слайдер, тъмен режим, контакти, работно време, бутон, снимка, "
+        "подредба, отмени, одобри."
     ),
 }
 

@@ -7,8 +7,26 @@ import re
 
 from .db import STATUS_ACTIVE, STATUS_UNDONE, connect, get_latest_state, save_new_state
 from .guardrails import HEX_COLOR_RE, color_contrast_ratio, normalize_palette_changes, palette_guardrail
-from .site_state import (DARK_DEFAULT_MODES, HOVER_ELEMENTS, HOVER_SHADOWS, MAX_TESTIMONIALS, MULTILINE_FIELDS,
-                         SWITCHER_POSITIONS, normalize_text)
+from .site_state import (
+    DARK_DEFAULT_MODES,
+    HOVER_ELEMENTS,
+    HOVER_SHADOWS,
+    MAX_TESTIMONIALS,
+    MULTILINE_FIELDS,
+    SWITCHER_POSITIONS,
+    normalize_text,
+)
+
+
+def error(message):
+    """A tool result the model can act on: what was wrong with the call."""
+    return json.dumps({"status": "error", "message": message})
+
+
+def blocked(reason):
+    """A tool result for a change that a guardrail refused."""
+    return json.dumps({"status": "blocked_by_guardrail", "reason": reason})
+
 
 def get_current_site_state():
     ver_id, state = get_latest_state()
@@ -17,18 +35,21 @@ def get_current_site_state():
 def update_text_content(section_id: str, field: str, new_value: str):
     ver_id, state = get_latest_state()
     if section_id not in state["sections"]:
-        return json.dumps({"status": "error", "message": f"Unknown section_id '{section_id}'. Available: {list(state['sections'].keys())}"})
+        return error(f"Unknown section_id '{section_id}'. Available: {list(state['sections'].keys())}")
     if field not in state["sections"][section_id]:
-        return json.dumps({"status": "error", "message": f"Field '{field}' not found in '{section_id}'. Available: {list(state['sections'][section_id].keys())}"})
+        available = list(state["sections"][section_id].keys())
+        return error(f"Field '{field}' not found in '{section_id}'. Available: {available}")
     if not isinstance(state["sections"][section_id][field], str):
-        return json.dumps({"status": "error", "message": f"Field '{section_id}.{field}' is not a text field. Use the dedicated tool: update_services_list for services.items, update_testimonials for testimonials.items/autoplay_seconds."})
+        return error(f"Field '{section_id}.{field}' is not a text field. Use the dedicated tool: "
+                     "update_services_list for services.items, "
+                     "update_testimonials for testimonials.items/autoplay_seconds.")
     if section_id == "hero" and field == "image_url":
-        return json.dumps({"status": "error", "message": "Use update_hero_image to change the hero image."})
+        return error("Use update_hero_image to change the hero image.")
     if not isinstance(new_value, str) or len(new_value.strip()) > 2000:
-        return json.dumps({"status": "error", "message": "Text values must be strings of at most 2000 characters."})
+        return error("Text values must be strings of at most 2000 characters.")
     if section_id == "contact" and field in ("email", "phone") and not new_value.strip():
-        return json.dumps({"status": "blocked_by_guardrail", "reason": f"Mandatory contact field '{field}' cannot be removed."})
-    
+        return blocked(f"Mandatory contact field '{field}' cannot be removed.")
+
     state["sections"][section_id][field] = normalize_text(new_value, (section_id, field) in MULTILINE_FIELDS)
     new_ver = save_new_state(state, f"Updated {section_id}.{field}")
     return json.dumps({"status": "success", "new_version": new_ver, "updated": f"{section_id}.{field}"})
@@ -37,9 +58,9 @@ def update_services_list(items_json: str):
     try:
         items = json.loads(items_json)
         if not isinstance(items, list):
-            return json.dumps({"status": "error", "message": "items_json must be a JSON array of objects with 'name' and 'desc'."})
+            return error("items_json must be a JSON array of objects with 'name' and 'desc'.")
         if len(items) > 12:
-            return json.dumps({"status": "error", "message": "A maximum of 12 services is allowed."})
+            return error("A maximum of 12 services is allowed.")
         if any(
             not isinstance(item, dict)
             or set(item.keys()) != {"name", "desc"}
@@ -49,7 +70,7 @@ def update_services_list(items_json: str):
             or not item["desc"].strip()
             for item in items
         ):
-            return json.dumps({"status": "error", "message": "Each service must contain only non-empty string 'name' and 'desc' fields."})
+            return error("Each service must contain only non-empty string 'name' and 'desc' fields.")
         items = [
             {"name": normalize_text(item["name"], False)[:120], "desc": normalize_text(item["desc"], True)[:1000]}
             for item in items
@@ -59,22 +80,23 @@ def update_services_list(items_json: str):
         new_ver = save_new_state(state, f"Updated services list ({len(items)} items)")
         return json.dumps({"status": "success", "new_version": new_ver})
     except Exception as e:
-        return json.dumps({"status": "error", "message": str(e)})
+        return error(str(e))
 
-def update_theme_style(primary_color: str = None, background_color: str = None, text_color: str = None, border_radius: str = None):
-    changes, error = normalize_palette_changes({
+def update_theme_style(primary_color: str = None, background_color: str = None, text_color: str = None,
+                       border_radius: str = None):
+    changes, problem = normalize_palette_changes({
         "primary_color": primary_color, "background_color": background_color,
         "text_color": text_color, "border_radius": border_radius
     })
-    if error:
-        return json.dumps({"status": "error", "message": error})
+    if problem:
+        return error(problem)
     if not changes:
-        return json.dumps({"status": "error", "message": "Provide at least one property to change."})
+        return error("Provide at least one property to change.")
     ver_id, state = get_latest_state()
     new_theme = {**state["theme"], **changes}
-    blocked = palette_guardrail(new_theme, "Light theme")
-    if blocked:
-        return json.dumps({"status": "blocked_by_guardrail", "reason": blocked})
+    refusal = palette_guardrail(new_theme, "Light theme")
+    if refusal:
+        return blocked(refusal)
     state["theme"] = new_theme
     summary = ", ".join(f"{k}={v}" for k, v in changes.items())
     new_ver = save_new_state(state, f"Changed theme: {summary}")
@@ -83,16 +105,16 @@ def update_theme_style(primary_color: str = None, background_color: str = None, 
 def configure_dark_mode(enabled: bool, background_color: str = None, text_color: str = None, primary_color: str = None,
                         switcher_position: str = None, default_mode: str = None):
     if not isinstance(enabled, bool):
-        return json.dumps({"status": "error", "message": "'enabled' must be true or false."})
+        return error("'enabled' must be true or false.")
     if switcher_position is not None and switcher_position not in SWITCHER_POSITIONS:
-        return json.dumps({"status": "error", "message": f"switcher_position must be one of {list(SWITCHER_POSITIONS)}."})
+        return error(f"switcher_position must be one of {list(SWITCHER_POSITIONS)}.")
     if default_mode is not None and default_mode not in DARK_DEFAULT_MODES:
-        return json.dumps({"status": "error", "message": f"default_mode must be one of {list(DARK_DEFAULT_MODES)}."})
-    changes, error = normalize_palette_changes({
+        return error(f"default_mode must be one of {list(DARK_DEFAULT_MODES)}.")
+    changes, problem = normalize_palette_changes({
         "background_color": background_color, "text_color": text_color, "primary_color": primary_color
     })
-    if error:
-        return json.dumps({"status": "error", "message": error})
+    if problem:
+        return error(problem)
     ver_id, state = get_latest_state()
     dark = {**state["theme"]["dark_mode"], **changes, "enabled": enabled}
     if switcher_position is not None:
@@ -100,15 +122,16 @@ def configure_dark_mode(enabled: bool, background_color: str = None, text_color:
     if default_mode is not None:
         dark["default_mode"] = default_mode
     if enabled:
-        blocked = palette_guardrail(dark, "Dark mode palette")
-        if blocked:
-            return json.dumps({"status": "blocked_by_guardrail", "reason": blocked})
+        refusal = palette_guardrail(dark, "Dark mode palette")
+        if refusal:
+            return blocked(refusal)
     state["theme"]["dark_mode"] = dark
     new_ver = save_new_state(state, f"Dark mode {'enabled' if enabled else 'disabled'}")
     result = {"status": "success", "new_version": new_ver, "dark_mode": dark}
     if enabled:
         result["visitor_experience"] = (
-            f"Visitors see a theme switcher with three options: Light, Dark and Auto (Auto follows the visitor's OS setting live). "
+            "Visitors see a theme switcher with three options: Light, Dark and Auto "
+            "(Auto follows the visitor's OS setting live). "
             f"Switcher position: {dark['switcher_position']}. Mode before the visitor chooses: {dark['default_mode']}. "
             f"The visitor's choice is remembered in their browser and can be changed back to Auto at any time."
         )
@@ -117,19 +140,19 @@ def configure_dark_mode(enabled: bool, background_color: str = None, text_color:
 def update_card_style(mode: str, border_color: str = None, border_opacity: float = None,
                       border_width: str = None, background_color: str = None):
     if mode not in ("light", "dark", "both"):
-        return json.dumps({"status": "error", "message": "mode must be 'light', 'dark' or 'both'."})
+        return error("mode must be 'light', 'dark' or 'both'.")
     changes = {}
     if border_color is not None:
         if not isinstance(border_color, str) or not re.fullmatch(HEX_COLOR_RE, border_color.strip()):
-            return json.dumps({"status": "error", "message": "border_color must use 6-digit hex format, e.g. #ffffff."})
+            return error("border_color must use 6-digit hex format, e.g. #ffffff.")
         changes["border_color"] = border_color.strip().lower()
     if border_opacity is not None:
         if not isinstance(border_opacity, (int, float)) or not (0.05 <= float(border_opacity) <= 1):
-            return json.dumps({"status": "error", "message": "border_opacity must be a number between 0.05 and 1."})
+            return error("border_opacity must be a number between 0.05 and 1.")
         changes["border_opacity"] = round(float(border_opacity), 2)
     if border_width is not None:
         if not isinstance(border_width, str) or not re.fullmatch(r"[0-6]px", border_width.strip()):
-            return json.dumps({"status": "error", "message": "border_width must be between '0px' and '6px'."})
+            return error("border_width must be between '0px' and '6px'.")
         changes["border_width"] = border_width.strip()
     if background_color is not None:
         value = background_color.strip().lower() if isinstance(background_color, str) else ""
@@ -138,9 +161,9 @@ def update_card_style(mode: str, border_color: str = None, border_opacity: float
         elif re.fullmatch(HEX_COLOR_RE, value):
             changes["background_color"] = value
         else:
-            return json.dumps({"status": "error", "message": "background_color must be a 6-digit hex color or 'none'."})
+            return error("background_color must be a 6-digit hex color or 'none'.")
     if not changes:
-        return json.dumps({"status": "error", "message": "Provide at least one style property to change."})
+        return error("Provide at least one style property to change.")
 
     ver_id, state = get_latest_state()
     theme = state["theme"]
@@ -152,11 +175,13 @@ def update_card_style(mode: str, border_color: str = None, border_opacity: float
             text_color = theme["dark_mode"]["text_color"] if m == "dark" else theme["text_color"]
             ratio = color_contrast_ratio(new_style["background_color"], text_color)
             if ratio < 4.5:
-                return json.dumps({"status": "blocked_by_guardrail", "reason": f"{m} mode card background has {ratio:.2f}:1 contrast with the text, it must be at least 4.5:1."})
+                return blocked(f"{m} mode card background has {ratio:.2f}:1 contrast with the text, "
+                               "it must be at least 4.5:1.")
         theme["card_style"][m] = new_style
     note = None
     if "dark" in modes and not theme["dark_mode"]["enabled"]:
-        note = "Dark mode is currently disabled, so the dark card style will only be visible after configure_dark_mode(enabled=true)."
+        note = ("Dark mode is currently disabled, so the dark card style will only be visible after "
+                "configure_dark_mode(enabled=true).")
     new_ver = save_new_state(state, f"Updated service card style ({mode} mode)")
     result = {"status": "success", "new_version": new_ver, "card_style": {m: theme["card_style"][m] for m in modes}}
     if note:
@@ -167,9 +192,9 @@ def update_hover_effect(element: str, enabled: bool = True, lift_px: int = None,
                         shadow: str = None, background_color: str = None, border_color: str = None,
                         border_opacity: float = None, tint_opacity: float = None, duration_ms: int = None):
     if element not in HOVER_ELEMENTS:
-        return json.dumps({"status": "error", "message": f"element must be one of {list(HOVER_ELEMENTS)}."})
+        return error(f"element must be one of {list(HOVER_ELEMENTS)}.")
     if not isinstance(enabled, bool):
-        return json.dumps({"status": "error", "message": "'enabled' must be true or false."})
+        return error("'enabled' must be true or false.")
     given = {
         "lift_px": lift_px, "scale": scale, "shadow": shadow, "background_color": background_color,
         "border_color": border_color, "border_opacity": border_opacity, "tint_opacity": tint_opacity,
@@ -178,7 +203,7 @@ def update_hover_effect(element: str, enabled: bool = True, lift_px: int = None,
     given = {k: v for k, v in given.items() if v is not None}
     unsupported = [k for k in given if k not in HOVER_ELEMENTS[element]]
     if unsupported:
-        return json.dumps({"status": "error", "message": f"{unsupported} not supported for '{element}'. Supported: {list(HOVER_ELEMENTS[element])}."})
+        return error(f"{unsupported} not supported for '{element}'. Supported: {list(HOVER_ELEMENTS[element])}.")
 
     def number_in(key, lo, hi, cast=float):
         value = given[key]
@@ -199,10 +224,10 @@ def update_hover_effect(element: str, enabled: bool = True, lift_px: int = None,
         if "duration_ms" in given:
             changes["duration_ms"] = number_in("duration_ms", 100, 600, int)
     except ValueError as e:
-        return json.dumps({"status": "error", "message": str(e)})
+        return error(str(e))
     if "shadow" in given:
         if given["shadow"] not in HOVER_SHADOWS:
-            return json.dumps({"status": "error", "message": f"shadow must be one of {list(HOVER_SHADOWS)}."})
+            return error(f"shadow must be one of {list(HOVER_SHADOWS)}.")
         changes["shadow"] = given["shadow"]
     for key in ("background_color", "border_color"):
         if key in given:
@@ -212,12 +237,13 @@ def update_hover_effect(element: str, enabled: bool = True, lift_px: int = None,
             elif re.fullmatch(HEX_COLOR_RE, value):
                 changes[key] = value
             else:
-                return json.dumps({"status": "error", "message": f"{key} must be a 6-digit hex color or 'none'."})
+                return error(f"{key} must be a 6-digit hex color or 'none'.")
     # Buttons and arrows keep white text/icons on hover, so a hover background must stay readable.
     if changes.get("background_color"):
         ratio = color_contrast_ratio(changes["background_color"], "#ffffff")
         if ratio < 4.5:
-            return json.dumps({"status": "blocked_by_guardrail", "reason": f"Hover background has {ratio:.2f}:1 contrast with the white text, it must be at least 4.5:1. Choose a darker shade."})
+            return blocked(f"Hover background has {ratio:.2f}:1 contrast with the white text, "
+                           "it must be at least 4.5:1. Choose a darker shade.")
 
     ver_id, state = get_latest_state()
     effect = {**state["theme"]["hover_effects"][element], **changes, "enabled": enabled}
@@ -229,20 +255,20 @@ def update_testimonials(items_json: str, autoplay_seconds: int = None):
     try:
         items = json.loads(items_json) if isinstance(items_json, str) else items_json
     except json.JSONDecodeError as e:
-        return json.dumps({"status": "error", "message": f"items_json is not valid JSON: {e}"})
+        return error(f"items_json is not valid JSON: {e}")
     if not isinstance(items, list) or not items:
-        return json.dumps({"status": "error", "message": "items_json must be a non-empty JSON array of objects with 'quote' and 'author'."})
+        return error("items_json must be a non-empty JSON array of objects with 'quote' and 'author'.")
     if len(items) > MAX_TESTIMONIALS:
-        return json.dumps({"status": "error", "message": f"A maximum of {MAX_TESTIMONIALS} testimonials is allowed."})
+        return error(f"A maximum of {MAX_TESTIMONIALS} testimonials is allowed.")
     if any(
         not isinstance(item, dict)
         or set(item.keys()) != {"quote", "author"}
         or not all(isinstance(item[k], str) and item[k].strip() for k in ("quote", "author"))
         for item in items
     ):
-        return json.dumps({"status": "error", "message": "Each testimonial must contain only non-empty string 'quote' and 'author' fields."})
+        return error("Each testimonial must contain only non-empty string 'quote' and 'author' fields.")
     if autoplay_seconds is not None and (not isinstance(autoplay_seconds, int) or not (0 <= autoplay_seconds <= 30)):
-        return json.dumps({"status": "error", "message": "autoplay_seconds must be an integer between 0 (off) and 30."})
+        return error("autoplay_seconds must be an integer between 0 (off) and 30.")
     ver_id, state = get_latest_state()
     section = state["sections"]["testimonials"]
     section["items"] = [
@@ -257,7 +283,7 @@ def update_testimonials(items_json: str, autoplay_seconds: int = None):
 
 def update_hero_image(image_url: str):
     if not isinstance(image_url, str) or not re.fullmatch(r"https?://\S+", image_url.strip()):
-        return json.dumps({"status": "error", "message": "Hero image must be a valid http or https URL."})
+        return error("Hero image must be a valid http or https URL.")
     ver_id, state = get_latest_state()
     state["sections"]["hero"]["image_url"] = image_url.strip()
     new_ver = save_new_state(state, "Updated hero banner image")
@@ -267,7 +293,7 @@ def reorder_sections(new_order: list):
     ver_id, state = get_latest_state()
     valid_sections = set(state["sections"].keys())
     if not isinstance(new_order, list) or len(new_order) != len(valid_sections) or set(new_order) != valid_sections:
-        return json.dumps({"status": "error", "message": f"Must include exact sections: {list(valid_sections)}"})
+        return error(f"Must include exact sections: {list(valid_sections)}")
     state["section_order"] = new_order
     new_ver = save_new_state(state, f"Reordered sections to {new_order}")
     return json.dumps({"status": "success", "new_version": new_ver})
@@ -280,7 +306,7 @@ def rollback_version():
     ).fetchall()
     if len(rows) < 2:
         conn.close()
-        return json.dumps({"status": "error", "message": "Already at initial version; nothing to undo."})
+        return error("Already at initial version; nothing to undo.")
     latest_id = rows[0][0]
     # Non-destructive undo: mark the version as undone so it can be redone.
     conn.execute("UPDATE site_versions SET status = ? WHERE version_id = ?", (STATUS_UNDONE, latest_id))
@@ -297,7 +323,7 @@ def redo_version():
     ).fetchone()
     if not row:
         conn.close()
-        return json.dumps({"status": "error", "message": "Nothing to redo."})
+        return error("Nothing to redo.")
     conn.execute("UPDATE site_versions SET status = ? WHERE version_id = ?", (STATUS_ACTIVE, row[0]))
     conn.commit()
     conn.close()

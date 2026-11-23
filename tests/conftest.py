@@ -1,6 +1,7 @@
 """Shared fixtures: a fake LM Studio, a throwaway SQLite database and the real app on a free port.
 
-Environment variables must be set before `server` (and the `concierge` package) is imported, because they are read at import time.
+Environment variables must be set before `server` (and the `concierge` package) is imported, because they are
+read at import time.
 """
 import os
 import socket

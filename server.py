@@ -17,13 +17,21 @@ from openai import APIConnectionError, APITimeoutError
 
 from concierge import agent
 from concierge.agent import run_llm_turn, strip_images_from_history
-from concierge.config import (ALLOWED_MODELS, DEFAULT_VOICE_GENDER, INDEX_PATH, LLM_BASE_URL, MAX_AUDIO_BYTES,
-                              MAX_BRIEF_TTS_CHARS, MAX_TTS_CHARS)
+from concierge.config import (
+    ALLOWED_MODELS,
+    DEFAULT_VOICE_GENDER,
+    INDEX_PATH,
+    LLM_BASE_URL,
+    MAX_AUDIO_BYTES,
+    MAX_BRIEF_TTS_CHARS,
+    MAX_TTS_CHARS,
+)
 from concierge.db import get_latest_state, init_db
 from concierge.lmstudio import ensure_default_model_on_startup, list_available_models, model_state, switch_model
 from concierge.tickets import TICKET_STATUSES, get_ticket, list_tickets, parse_ticket_id, set_ticket_status
 from concierge.tools import redo_version, rollback_version
 from concierge.voice import clean_for_speech, synthesize_speech, transcribe_audio, trim_to_sentences
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -87,7 +95,7 @@ async def api_tts(text: str = Form(...), brief: bool = Form(False), gender: str 
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():
-    with open(INDEX_PATH, "r", encoding="utf-8") as f:
+    with open(INDEX_PATH, encoding="utf-8") as f:
         # The page remembers which build it was served from, so it can detect when it is outdated.
         return f.read().replace("__APP_BUILD__", app_build())
 
@@ -99,7 +107,8 @@ def app_build() -> str:
 async def api_state(request: Request):
     session_id, session = get_session(request)
     ver_id, state = get_latest_state()
-    response = JSONResponse({"version": ver_id, "state": state, "active_skills_count": len(session["active_skills"]), "app_build": app_build()})
+    response = JSONResponse({"version": ver_id, "state": state, "active_skills_count": len(session["active_skills"]),
+                             "app_build": app_build()})
     return set_session_cookie(response, session_id)
 
 @app.post("/api/undo")
@@ -123,7 +132,8 @@ def api_select_model(model: str = Form(...)):
     if model not in {model_id for model_id, _ in ALLOWED_MODELS}:
         return JSONResponse({"status": "error", "message": f"Unknown model '{model}'."}, status_code=400)
     if model_state["switching"]:
-        return JSONResponse({"status": "error", "message": "Another model switch is already in progress."}, status_code=409)
+        return JSONResponse({"status": "error", "message": "Another model switch is already in progress."},
+                            status_code=409)
     result = switch_model(model)
     return JSONResponse(result, status_code=200 if result["status"] == "success" else 500)
 
@@ -147,7 +157,8 @@ def api_ticket(ticket_ref: str):
 @app.post("/api/tickets/{ticket_ref}/status")
 def api_ticket_status(ticket_ref: str, status: str = Form(...)):
     if status not in TICKET_STATUSES:
-        return JSONResponse({"status": "error", "message": f"status must be one of {list(TICKET_STATUSES)}."}, status_code=400)
+        return JSONResponse({"status": "error", "message": f"status must be one of {list(TICKET_STATUSES)}."},
+                            status_code=400)
     try:
         ticket_id = parse_ticket_id(ticket_ref)
     except ValueError as e:
@@ -173,7 +184,8 @@ async def api_chat(
     session_id, session = get_session(request)
     if model_state["switching"]:
         response = JSONResponse({
-            "reply": f"The AI model is being switched to '{model_state['target']}'. Please wait until it is loaded and try again.",
+            "reply": (f"The AI model is being switched to '{model_state['target']}'. "
+                      "Please wait until it is loaded and try again."),
             "tools_used": []
         })
         return set_session_cookie(response, session_id)
@@ -204,16 +216,20 @@ async def api_chat(
                 "image_url": {"url": f"data:{mime};base64,{b64}"}
             })
             if not message.strip():
-                user_content_blocks.insert(0, {"type": "text", "text": f"Analyze this attached screenshot ({file.filename}) and apply relevant website updates or suggest improvements."})
+                user_content_blocks.insert(0, {"type": "text", "text": (
+                    f"Analyze this attached screenshot ({file.filename}) and apply relevant website updates "
+                    "or suggest improvements.")})
         else:
             text_content = raw_bytes.decode("utf-8", errors="ignore")
-            is_skill = (attachment_type == "skill") or ("skill" in fname) or ("guideline" in fname) or ("handoff" in fname)
+            is_skill = attachment_type == "skill" or any(word in fname for word in ("skill", "guideline", "handoff"))
             if is_skill:
                 active_skills.append(f"[Skill File: {file.filename}]\n{text_content}")
                 skill_loaded = file.filename
                 user_content_blocks.append({
                     "type": "text",
-                    "text": f"[System Note: The client attached a Skill/Guideline file '{file.filename}'. It is now active in your system instructions. Acknowledge the rules and apply any immediate instructions.]"
+                    "text": (f"[System Note: The client attached a Skill/Guideline file '{file.filename}'. "
+                             "It is now active in your system instructions. "
+                             "Acknowledge the rules and apply any immediate instructions.]")
                 })
             else:
                 user_content_blocks.append({
@@ -233,7 +249,8 @@ async def api_chat(
         msg = await run_in_threadpool(run_llm_turn, active_model, active_skills, turn_history, tools_used, voice_mode)
 
         if msg.tool_calls:
-            bot_reply = "Stopped after too many consecutive tool calls. Please check the preview and rephrase your request if needed."
+            bot_reply = ("Stopped after too many consecutive tool calls. "
+                         "Please check the preview and rephrase your request if needed.")
         else:
             bot_reply = msg.content or "Changes applied."
         turn_history.append({"role": "assistant", "content": bot_reply})

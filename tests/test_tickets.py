@@ -52,8 +52,10 @@ def test_ticket_status_lookup_accepts_ticket_codes():
 def test_old_ticket_table_is_migrated(tmp_path, monkeypatch):
     old_db = tmp_path / "old.db"
     conn = sqlite3.connect(old_db)
-    conn.execute("CREATE TABLE change_tickets (ticket_id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, version_id INTEGER, ticket_markdown TEXT)")
-    conn.execute("INSERT INTO change_tickets (created_at, version_id, ticket_markdown) VALUES ('2026-01-01', 3, '# old')")
+    conn.execute("CREATE TABLE change_tickets (ticket_id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, "
+                 "version_id INTEGER, ticket_markdown TEXT)")
+    conn.execute("INSERT INTO change_tickets (created_at, version_id, ticket_markdown) "
+                 "VALUES ('2026-01-01', 3, '# old')")
     conn.commit()
     conn.close()
     monkeypatch.setattr(config, "DB_PATH", str(old_db))
