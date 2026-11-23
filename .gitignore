@@ -20,3 +20,5 @@ evals/results/*.json
 .claude/
 .env
 *.log
+.coverage
+coverage.xml

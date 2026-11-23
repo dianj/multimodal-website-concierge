@@ -74,7 +74,7 @@ Configuration through environment variables: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_C
 
 ## Testing
 
-**Deterministic tests: 53 tests, about 12 s, no GPU needed.** A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
+**Deterministic tests: 53 tests, about 12 s, no GPU needed, 80% line coverage** (`pytest --cov`). A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
 
 | Suite | What it covers |
 |---|---|
@@ -86,7 +86,7 @@ Configuration through environment variables: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_C
 ```bash
 pip install -r requirements-dev.txt
 python -m playwright install chromium     # or, on Windows with Edge: add --browser-channel msedge
-python -m pytest
+python -m pytest --cov=concierge --cov=server
 ```
 
 **LLM evals: does the real model do the right thing?** `python evals/run_evals.py` sends 19 realistic requests in English and Bulgarian (including multi-turn ticket flows) to each local model. Each request starts on a fresh site and is graded on the final site state, the tools used and the reply, not on wording.
