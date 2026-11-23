@@ -54,8 +54,10 @@ This is a portfolio project. It simulates a **client-facing AI website maintenan
 | `concierge/db.py` | SQLite: versioned snapshots, table creation and column migrations |
 | `concierge/tools.py` | The 11 site-editing tools, including undo (`rollback_version`) and redo |
 | `concierge/tickets.py` | Ticket storage and the 3 ticket tools |
-| `concierge/registry.py` | Tool schemas sent to the model and `execute_tool_call` (the dispatcher that never raises) |
-| `concierge/agent.py` | System prompt, voice-mode rules and the tool-calling loop (`run_llm_turn`) |
+| `concierge/tool_schemas.py` | Tool schemas sent to the model |
+| `concierge/registry.py` | `execute_tool_call`, the dispatcher that never raises |
+| `concierge/prompts.py` | System prompt and voice-mode rules |
+| `concierge/agent.py` | The tool-calling loop (`run_llm_turn`) and chat-history helpers |
 | `concierge/lmstudio.py` | LM Studio model list, load, unload and switch |
 | `concierge/voice.py` | faster-whisper STT with EN/BG language pick, text cleanup for speech, edge-tts synthesis with retries |
 | `index.html` | Single-page UI in vanilla JS: chat pane and live preview renderer. No build step. |
@@ -177,7 +179,7 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 
 ---
 
-## 7. System prompt rules (`build_system_prompt` in `concierge/agent.py`)
+## 7. System prompt rules (`build_system_prompt` in `concierge/prompts.py`)
 
 * **Language:** English is primary. The agent replies in Bulgarian when the user writes or speaks Bulgarian. Website content keeps its language unless a translation is requested.
 * **Paragraphs:** plain text only, with `\n\n` between paragraphs, never `<p>` or `<br>`.

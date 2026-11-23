@@ -1,7 +1,7 @@
 """Unit tests for the agent tools and guardrails (no browser, no LLM)."""
 import json
 
-from concierge import db, registry, site_state, tickets, tools, voice
+from concierge import db, registry, site_state, tickets, tool_schemas, tools, voice
 
 
 def call(fn, *args, **kwargs):
@@ -139,7 +139,7 @@ def test_bad_tool_calls_return_errors_instead_of_raising():
 
 
 def test_every_tool_schema_has_an_implementation():
-    names = {tool["function"]["name"] for tool in registry.TOOLS_SCHEMA}
+    names = {tool["function"]["name"] for tool in tool_schemas.TOOLS_SCHEMA}
     assert names == set(registry.AVAILABLE_FUNCTIONS) and len(names) == 14
 
 
