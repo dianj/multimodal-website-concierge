@@ -74,13 +74,14 @@ Configuration through environment variables: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_C
 
 ## Testing
 
-**Deterministic tests: 53 tests, about 12 s, no GPU needed, 80% line coverage** (`pytest --cov`). A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
+**Deterministic tests: 61 tests, about 15 s, no GPU needed, 86% line coverage** (`pytest --cov`). A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
 
 | Suite | What it covers |
 |---|---|
 | `tests/test_tools.py` (21) | Guardrails (contrast, mandatory fields, whitelists), atomic theme changes, paragraphs, slider data, Undo/Redo branches, migration of old snapshots |
 | `tests/test_api.py` (12) | Full chat turns over HTTP: tool execution, guardrail results passed back to the model, Skill injection, screenshots dropped from history, recovery after an LLM outage or timeout, tool-loop cap, model switching |
 | `tests/test_tickets.py` (7) | Ticket tools and validation, migration of the old ticket table, ticket API, and the full agent flow: offer → client agrees → ticket created → developer updates the status → the agent reports it |
+| `tests/test_voice.py` (8) | Speech language restricted to English and Bulgarian, transcription vocabulary, Whisper loaded once on the CPU, Markdown not read aloud, TTS retries with a fallback voice and a timeout per attempt (fake Whisper and edge-tts, no network) |
 | `tests/e2e/test_ui.py` (13, Playwright) | Enter/Shift+Enter, Markdown XSS safety, Undo/Redo, slider, Light/Dark/Auto following the OS setting, hover effects on mouse-over, outdated-page banner, model selector, voice-reply requests, ticket panel |
 
 ```bash
