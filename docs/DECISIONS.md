@@ -57,3 +57,12 @@ python evals/decisions/grade.py                                              # t
 - Needs log-probabilities from the model server; without them no approval ticket is created (the client can ask
   again once the server provides them; edits are unaffected).
 - 32 messages, written by the same person who wrote the questions.
+
+## Not gated (and why)
+
+- **Is the request about this website (`in_scope`)?** Every tool acts only on this one site, and every edit is a new
+  version with undo and redo. An off-topic request can at most get a chat answer; there is nothing a gate in front of
+  it would prevent. The one step other people act on, the sign-off ticket for the developers, is gated.
+- **Each edit.** Edits are reversible (versions, undo), and the client sees the preview at once; asking the model
+  "does the client agree?" before every edit would add a call to every change for no protection the undo does not
+  already give.
