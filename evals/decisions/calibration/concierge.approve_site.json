@@ -1,0 +1,20 @@
+{
+  "question_id": "concierge.approve_site",
+  "model": "gemma-4-26b-a4b-it",
+  "prompt_hash": "ee4cd227e186",
+  "temperature": 4.1516,
+  "n_cases": 27,
+  "fitted_at": "2026-11-24T00:13:45.599609+00:00",
+  "metrics_before": {
+    "n": 27,
+    "accuracy": 0.963,
+    "ece": 0.0368,
+    "brier": 0.0733
+  },
+  "metrics_after": {
+    "n": 27,
+    "accuracy": 0.963,
+    "ece": 0.0289,
+    "brier": 0.0735
+  }
+}

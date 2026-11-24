@@ -1,0 +1,20 @@
+{
+  "question_id": "concierge.instruction_in_reply",
+  "model": "gemma-4-26b-a4b-it",
+  "prompt_hash": "29bf2ee87365",
+  "temperature": 2.8772,
+  "n_cases": 32,
+  "fitted_at": "2026-11-24T00:14:10.129551+00:00",
+  "metrics_before": {
+    "n": 32,
+    "accuracy": 0.9688,
+    "ece": 0.0307,
+    "brier": 0.0622
+  },
+  "metrics_after": {
+    "n": 32,
+    "accuracy": 0.9688,
+    "ece": 0.0449,
+    "brier": 0.0682
+  }
+}

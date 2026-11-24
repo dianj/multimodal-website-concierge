@@ -14,6 +14,12 @@ MODEL_LOAD_TIMEOUT = 600
 # Seconds to wait for one model answer; a slower answer ends the turn with a friendly message.
 LLM_TIMEOUT_SECONDS = float(os.environ.get("LLM_TIMEOUT_SECONDS", "120"))
 
+# --- Sign-off gate (docs/DECISIONS.md): the approval ticket needs a calibrated, clear approval ---
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DECISION_GATE = os.environ.get("DECISION_GATE", "1") == "1"
+CALIBRATION_DIR = os.path.join(BASE_DIR, os.environ.get("CALIBRATION_DIR", "evals/decisions/calibration"))
+DECISION_TIMEOUT_SECONDS = float(os.environ.get("DECISION_TIMEOUT_SECONDS", "30"))
+
 # --- VOICE ---
 # Speech-to-text runs locally with faster-whisper on the CPU (the GPU is reserved for the LLM).
 # Text-to-speech uses edge-tts (Microsoft Edge online neural voices), same stack as the other voice projects.
