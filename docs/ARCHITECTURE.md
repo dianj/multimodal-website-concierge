@@ -166,7 +166,7 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 | `update_hero_image` | Sets the hero image; must be an `http(s)` URL |
 | `reorder_sections` | Must contain every section exactly once |
 | `rollback_version` | Non-destructive undo |
-| `create_approval_ticket` | Approval ticket: summary + the approved JSON state |
+| `create_approval_ticket` | Approval ticket: summary + the approved JSON state. Runs only if the sign-off gate agrees that the client's latest message approves the site (two calibrated one-letter checks, [DECISIONS.md](DECISIONS.md)) |
 | `create_support_ticket` | `feature_request` or `support` ticket: title, client request, why the agent could not do it, optional partial work, priority. Only after the client agrees. |
 | `get_ticket_status` | One ticket by code (`CR-0003`, `3` or `cr-3`), or the 10 most recent tickets |
 

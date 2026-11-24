@@ -32,7 +32,7 @@ Everything runs locally (LM Studio for the LLM, faster-whisper for speech recogn
 | **Design** | Theme colors and radius (several properties in one atomic call) · dark mode with a Light / Dark / Auto switcher that follows the visitor's OS setting · card borders per light/dark mode · hover effects (lift, scale, shadow, colors, outline, tint, speed) |
 | **Safety** | Contrast ≥ 4.5:1 for every text/background pair, including dark mode, cards and hover states · contact email/phone cannot be removed · whitelisted value ranges, so no free-form CSS or HTML · `textContent`-only rendering |
 | **Workflow** | Non-destructive Undo/Redo history · honest multi-part reporting (the agent says what it could *not* do) · verification before confirming changes |
-| **Tickets** | `CR-XXXX` approval tickets with the approved JSON · feature-request tickets for things the tools cannot do, created only after the client agrees · developer panel with status (open → in progress → done) · the agent reports a ticket's real status |
+| **Tickets** | `CR-XXXX` approval tickets with the approved JSON, created only after a **calibrated sign-off check** agrees that the client approved the site ([DECISIONS.md](docs/DECISIONS.md); 32/32 labelled messages on Gemma and Qwen) · feature-request tickets for things the tools cannot do, created only after the client agrees · developer panel with status (open → in progress → done) · the agent reports a ticket's real status |
 | **Voice & UX** | Spoken replies (male/female, EN/BG), automatically shortened in voice mode · adjustable chat text size · model switcher (Gemma 4 26B / Qwen 3.8 27B, one loaded at a time) · "app updated" reload banner |
 
 ## Key engineering decisions
@@ -42,7 +42,8 @@ Everything runs locally (LM Studio for the LLM, faster-whisper for speech recogn
 3. **Versioned, migratable history.** Each change stores a full JSON snapshot. `upgrade_state()` migrates older snapshots on read, so Undo/Redo keeps working across schema changes.
 4. **Resilient agent loop.** It runs up to 8 tool rounds in a worker thread. Bad tool calls return errors to the model instead of crashing, and a failed turn never corrupts the chat history.
 5. **A human in the loop for what the tools cannot do.** Instead of improvising, the agent offers a developer ticket, creates it only after the client says yes, and can later report the ticket's real status from the database.
-6. **Hardware-aware model management.** Only one 26–27B model fits in VRAM. Switching unloads the current model through the LM Studio REST API and loads the selected one; if loading fails, the previous model is restored.
+6. **A measured probability before the sign-off.** The approval ticket is what developers act on, so "did the client approve?" is not left to the model's word: two one-letter questions (approves? text aimed at the system?) are read from the log-probabilities and calibrated per model; below the thresholds the agent asks instead.
+7. **Hardware-aware model management.** Only one 26–27B model fits in VRAM. Switching unloads the current model through the LM Studio REST API and loads the selected one; if loading fails, the previous model is restored.
 
 ## Tech stack
 
@@ -74,7 +75,7 @@ Configuration through environment variables: `LLM_BASE_URL`, `LLM_MODEL`, `LLM_C
 
 ## Testing
 
-**Deterministic tests: 61 tests, about 15 s, no GPU needed, 86% line coverage** (`pytest --cov`). A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
+**Deterministic tests: 93 tests, about 20 s, no GPU needed, 90% line coverage** (`pytest --cov`). A small scripted fake of LM Studio (`tests/fake_lmstudio.py`) replaces the LLM, so the agent loop, tools, guardrails, versioning and UI are tested the same way on every run. The same tests run in CI on every push.
 
 | Suite | What it covers |
 |---|---|
