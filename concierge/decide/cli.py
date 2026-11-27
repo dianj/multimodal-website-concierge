@@ -2,6 +2,7 @@
 
     python -m concierge.decide.cli collect --question concierge.approve_site   # evals/decisions/<question>.jsonl
     python -m concierge.decide.cli calibrate --question concierge.approve_site
+    (collect --out <file> writes the run elsewhere, e.g. for a held-out set)
 
 `collect` asks the configured model once per case and saves the raw probabilities (evals/decisions/runs/), so
 `calibrate` can be repeated without the model. "After" metrics are 5-fold cross-validated: each fold is scored
@@ -145,6 +146,7 @@ def main(argv=None):
     c = sub.add_parser("collect")
     c.add_argument("--question", required=True)
     c.add_argument("--cases", type=Path)
+    c.add_argument("--out", type=Path, help="the run file (default evals/decisions/runs/<question>.json)")
     k = sub.add_parser("calibrate")
     k.add_argument("--question", required=True)
     k.add_argument("--run", type=Path)
@@ -152,6 +154,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     run_path = DECISIONS_DIR / "runs" / f"{args.question}.json"
     if args.command == "collect":
+        run_path = args.out or run_path
         asyncio.run(collect(args.question, args.cases or DECISIONS_DIR / f"{args.question}.jsonl", run_path))
         print(f"saved {run_path}")
     else:
