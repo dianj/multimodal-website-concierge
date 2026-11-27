@@ -3,10 +3,20 @@
 Every tool returns a JSON string: status success, error, or blocked_by_guardrail with a reason.
 """
 import copy
+import functools
 import json
+import random
 import re
+import time
 
-from .db import STATUS_ACTIVE, STATUS_UNDONE, connect, get_latest_state, save_new_state
+from .db import (
+    STATUS_ACTIVE,
+    STATUS_UNDONE,
+    StaleVersion,
+    get_latest_state,
+    save_new_state,
+    write_transaction,
+)
 from .guardrails import HEX_COLOR_RE, contrast_refusal, normalize_palette_changes
 from .site_state import (
     DARK_DEFAULT_MODES,
@@ -29,10 +39,29 @@ def blocked(reason):
     return json.dumps({"status": "blocked_by_guardrail", "reason": reason})
 
 
+SAVE_ATTEMPTS = 20
+
+
+def on_latest_version(tool):
+    """Run the tool again when another change was saved between its read and its save (db.StaleVersion): it reads
+    the new state and applies its change once more, so no edit overwrites another (review T21.A7). A short random
+    pause between attempts keeps two busy editors from colliding again and again."""
+    @functools.wraps(tool)
+    def wrapper(*args, **kwargs):
+        for _ in range(SAVE_ATTEMPTS):
+            try:
+                return tool(*args, **kwargs)
+            except StaleVersion:
+                time.sleep(random.uniform(0, 0.01))
+        return error("The site was changed by another edit at the same moment; nothing was saved. Try again.")
+    return wrapper
+
+
 def get_current_site_state():
     ver_id, state = get_latest_state()
     return json.dumps({"version": ver_id, "state": state})
 
+@on_latest_version
 def update_text_content(section_id: str, field: str, new_value: str):
     ver_id, state = get_latest_state()
     if section_id not in state["sections"]:
@@ -52,9 +81,10 @@ def update_text_content(section_id: str, field: str, new_value: str):
         return blocked(f"Mandatory contact field '{field}' cannot be removed.")
 
     state["sections"][section_id][field] = normalize_text(new_value, (section_id, field) in MULTILINE_FIELDS)
-    new_ver = save_new_state(state, f"Updated {section_id}.{field}")
+    new_ver = save_new_state(state, f"Updated {section_id}.{field}", parent=ver_id)
     return json.dumps({"status": "success", "new_version": new_ver, "updated": f"{section_id}.{field}"})
 
+@on_latest_version
 def update_services_list(items_json: str):
     try:
         items = json.loads(items_json)
@@ -78,11 +108,14 @@ def update_services_list(items_json: str):
         ]
         ver_id, state = get_latest_state()
         state["sections"]["services"]["items"] = items
-        new_ver = save_new_state(state, f"Updated services list ({len(items)} items)")
+        new_ver = save_new_state(state, f"Updated services list ({len(items)} items)", parent=ver_id)
         return json.dumps({"status": "success", "new_version": new_ver})
+    except StaleVersion:
+        raise
     except Exception as e:
         return error(str(e))
 
+@on_latest_version
 def update_theme_style(primary_color: str = None, background_color: str = None, text_color: str = None,
                        border_radius: str = None):
     changes, problem = normalize_palette_changes({
@@ -99,9 +132,10 @@ def update_theme_style(primary_color: str = None, background_color: str = None, 
     if refusal := contrast_refusal(current, state):
         return blocked(refusal)
     summary = ", ".join(f"{k}={v}" for k, v in changes.items())
-    new_ver = save_new_state(state, f"Changed theme: {summary}")
+    new_ver = save_new_state(state, f"Changed theme: {summary}", parent=ver_id)
     return json.dumps({"status": "success", "new_version": new_ver, "changed": changes})
 
+@on_latest_version
 def configure_dark_mode(enabled: bool, background_color: str = None, text_color: str = None, primary_color: str = None,
                         switcher_position: str = None, default_mode: str = None):
     if not isinstance(enabled, bool):
@@ -125,7 +159,7 @@ def configure_dark_mode(enabled: bool, background_color: str = None, text_color:
     state["theme"]["dark_mode"] = dark
     if refusal := contrast_refusal(current, state):
         return blocked(refusal)
-    new_ver = save_new_state(state, f"Dark mode {'enabled' if enabled else 'disabled'}")
+    new_ver = save_new_state(state, f"Dark mode {'enabled' if enabled else 'disabled'}", parent=ver_id)
     result = {"status": "success", "new_version": new_ver, "dark_mode": dark}
     if enabled:
         result["visitor_experience"] = (
@@ -136,6 +170,7 @@ def configure_dark_mode(enabled: bool, background_color: str = None, text_color:
         )
     return json.dumps(result)
 
+@on_latest_version
 def update_card_style(mode: str, border_color: str = None, border_opacity: float = None,
                       border_width: str = None, background_color: str = None):
     if mode not in ("light", "dark", "both"):
@@ -177,12 +212,13 @@ def update_card_style(mode: str, border_color: str = None, border_opacity: float
     if "dark" in modes and not theme["dark_mode"]["enabled"]:
         note = ("Dark mode is currently disabled, so the dark card style will only be visible after "
                 "configure_dark_mode(enabled=true).")
-    new_ver = save_new_state(state, f"Updated service card style ({mode} mode)")
+    new_ver = save_new_state(state, f"Updated service card style ({mode} mode)", parent=ver_id)
     result = {"status": "success", "new_version": new_ver, "card_style": {m: theme["card_style"][m] for m in modes}}
     if note:
         result["note"] = note
     return json.dumps(result)
 
+@on_latest_version
 def update_hover_effect(element: str, enabled: bool = True, lift_px: int = None, scale: float = None,
                         shadow: str = None, background_color: str = None, border_color: str = None,
                         border_opacity: float = None, tint_opacity: float = None, duration_ms: int = None):
@@ -240,9 +276,10 @@ def update_hover_effect(element: str, enabled: bool = True, lift_px: int = None,
     # Buttons and arrows keep white text/icons on hover, so a hover background must stay readable.
     if refusal := contrast_refusal(current, state):
         return blocked(refusal)
-    new_ver = save_new_state(state, f"{'Updated' if enabled else 'Disabled'} hover effect: {element}")
+    new_ver = save_new_state(state, f"{'Updated' if enabled else 'Disabled'} hover effect: {element}", parent=ver_id)
     return json.dumps({"status": "success", "new_version": new_ver, "element": element, "hover_effect": effect})
 
+@on_latest_version
 def update_testimonials(items_json: str, autoplay_seconds: int = None):
     try:
         items = json.loads(items_json) if isinstance(items_json, str) else items_json
@@ -270,53 +307,52 @@ def update_testimonials(items_json: str, autoplay_seconds: int = None):
     if autoplay_seconds is not None:
         section["autoplay_seconds"] = autoplay_seconds
     layout = "slider" if len(items) > 1 else "single testimonial"
-    new_ver = save_new_state(state, f"Updated testimonials ({len(items)} items, {layout})")
+    new_ver = save_new_state(state, f"Updated testimonials ({len(items)} items, {layout})", parent=ver_id)
     return json.dumps({"status": "success", "new_version": new_ver, "count": len(items), "layout": layout})
 
-def update_hero_image(image_url: str):
+@on_latest_version
+def update_hero_image(image_url: str, alt_text: str = None):
     if not isinstance(image_url, str) or not re.fullmatch(r"https?://\S+", image_url.strip()):
         return error("Hero image must be a valid http or https URL.")
+    if alt_text is not None and (not isinstance(alt_text, str) or len(alt_text.strip()) > 250):
+        return error("alt_text must be a string of at most 250 characters.")
     ver_id, state = get_latest_state()
     state["sections"]["hero"]["image_url"] = image_url.strip()
-    new_ver = save_new_state(state, "Updated hero banner image")
+    if alt_text is not None:      # the site's <img alt> (WCAG 1.1.1); "" marks a decorative image
+        state["sections"]["hero"]["image_alt"] = normalize_text(alt_text, False)
+    new_ver = save_new_state(state, "Updated hero banner image", parent=ver_id)
     return json.dumps({"status": "success", "new_version": new_ver})
 
+@on_latest_version
 def reorder_sections(new_order: list):
     ver_id, state = get_latest_state()
     valid_sections = set(state["sections"].keys())
     if not isinstance(new_order, list) or len(new_order) != len(valid_sections) or set(new_order) != valid_sections:
         return error(f"Must include exact sections: {list(valid_sections)}")
     state["section_order"] = new_order
-    new_ver = save_new_state(state, f"Reordered sections to {new_order}")
+    new_ver = save_new_state(state, f"Reordered sections to {new_order}", parent=ver_id)
     return json.dumps({"status": "success", "new_version": new_ver})
 
 def rollback_version():
-    conn = connect()
-    rows = conn.execute(
-        "SELECT version_id FROM site_versions WHERE status = ? ORDER BY version_id DESC LIMIT 2",
-        (STATUS_ACTIVE,)
-    ).fetchall()
-    if len(rows) < 2:
-        conn.close()
-        return error("Already at initial version; nothing to undo.")
-    latest_id = rows[0][0]
-    # Non-destructive undo: mark the version as undone so it can be redone.
-    conn.execute("UPDATE site_versions SET status = ? WHERE version_id = ?", (STATUS_UNDONE, latest_id))
-    conn.commit()
-    conn.close()
-    ver_id, _ = get_latest_state()
-    return json.dumps({"status": "success", "reverted_to_version": ver_id})
+    # In one write transaction, so two undos at once undo two versions, not the same one twice.
+    with write_transaction() as conn:
+        rows = conn.execute(
+            "SELECT version_id FROM site_versions WHERE status = ? ORDER BY version_id DESC LIMIT 2",
+            (STATUS_ACTIVE,)
+        ).fetchall()
+        if len(rows) < 2:
+            return error("Already at initial version; nothing to undo.")
+        # Non-destructive undo: mark the version as undone so it can be redone.
+        conn.execute("UPDATE site_versions SET status = ? WHERE version_id = ?", (STATUS_UNDONE, rows[0][0]))
+    return json.dumps({"status": "success", "reverted_to_version": rows[1][0]})
 
 def redo_version():
-    conn = connect()
-    row = conn.execute(
-        "SELECT version_id FROM site_versions WHERE status = ? ORDER BY version_id ASC LIMIT 1",
-        (STATUS_UNDONE,)
-    ).fetchone()
-    if not row:
-        conn.close()
-        return error("Nothing to redo.")
-    conn.execute("UPDATE site_versions SET status = ? WHERE version_id = ?", (STATUS_ACTIVE, row[0]))
-    conn.commit()
-    conn.close()
+    with write_transaction() as conn:
+        row = conn.execute(
+            "SELECT version_id FROM site_versions WHERE status = ? ORDER BY version_id ASC LIMIT 1",
+            (STATUS_UNDONE,)
+        ).fetchone()
+        if not row:
+            return error("Nothing to redo.")
+        conn.execute("UPDATE site_versions SET status = ? WHERE version_id = ?", (STATUS_ACTIVE, row[0]))
     return json.dumps({"status": "success", "restored_version": row[0]})

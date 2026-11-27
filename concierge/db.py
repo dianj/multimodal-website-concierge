@@ -1,6 +1,7 @@
 """SQLite storage: versioned site snapshots and the ticket table (with in-place migrations)."""
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime
 
 from . import config
@@ -67,16 +68,47 @@ def get_latest_state():
     conn.close()
     return row[0], upgrade_state(json.loads(row[1]))
 
-def save_new_state(new_state: dict, summary: str):
+def get_state(version_id: int) -> dict | None:
+    """A stored version (any status), upgraded to the current schema."""
     conn = connect()
-    cur = conn.cursor()
-    # A new change after Undo invalidates the redo branch (kept in the DB for auditing).
-    cur.execute("UPDATE site_versions SET status = ? WHERE status = ?", (STATUS_DISCARDED, STATUS_UNDONE))
-    cur.execute(
-        "INSERT INTO site_versions (timestamp, change_summary, state_json) VALUES (?, ?, ?)",
-        (datetime.now().isoformat(), summary, json.dumps(new_state))
-    )
-    ver_id = cur.lastrowid
-    conn.commit()
+    row = conn.execute("SELECT state_json FROM site_versions WHERE version_id = ?", (version_id,)).fetchone()
     conn.close()
-    return ver_id
+    return upgrade_state(json.loads(row[0])) if row else None
+
+class StaleVersion(Exception):
+    """The state was changed by someone else after this change read it (review T21.A7: lost updates)."""
+
+
+@contextmanager
+def write_transaction():
+    """One writer at a time: BEGIN IMMEDIATE takes the write lock before reading, so a check and its write cannot
+    interleave with another writer's."""
+    conn = sqlite3.connect(config.DB_PATH, timeout=10, isolation_level=None)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        yield conn
+        conn.execute("COMMIT")
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.close()
+
+
+def latest_active_version(conn) -> int:
+    return conn.execute("SELECT MAX(version_id) FROM site_versions WHERE status = ?", (STATUS_ACTIVE,)).fetchone()[0]
+
+
+def save_new_state(new_state: dict, summary: str, parent: int | None = None):
+    """Save a full snapshot. With `parent` (the version the change was made on) the save is refused with StaleVersion
+    when another change was saved in between, instead of silently overwriting it."""
+    with write_transaction() as conn:
+        if parent is not None and latest_active_version(conn) != parent:
+            raise StaleVersion(f"version {parent} is no longer the latest")
+        # A new change after Undo invalidates the redo branch (kept in the DB for auditing).
+        conn.execute("UPDATE site_versions SET status = ? WHERE status = ?", (STATUS_DISCARDED, STATUS_UNDONE))
+        cur = conn.execute(
+            "INSERT INTO site_versions (timestamp, change_summary, state_json) VALUES (?, ?, ?)",
+            (datetime.now().isoformat(), summary, json.dumps(new_state))
+        )
+        return cur.lastrowid
