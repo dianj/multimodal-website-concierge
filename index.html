@@ -9,6 +9,9 @@
         .chat-pane { width: 42%; display: flex; flex-direction: column; border-right: 1px solid #334155; background: #1e293b; }
         .chat-header { padding: 16px 20px; background: #0f172a; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
         .skill-badge { background: #065f46; color: #6ee7b7; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .skill-list { display: flex; flex-wrap: wrap; gap: 6px; }
+        .skill-chip { display: inline-flex; align-items: center; gap: 4px; background: #1e293b; color: #e2e8f0; border-radius: 12px; padding: 2px 4px 2px 10px; font-size: 12px; }
+        .skill-chip button { background: none; border: none; color: #e2e8f0; cursor: pointer; font-size: 14px; padding: 0 4px; }
         .messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
         .msg { padding: 12px 16px; border-radius: 12px; max-width: 90%; line-height: 1.5; font-size: var(--chat-fs, 14px); }
         .msg.user { background: #2563eb; align-self: flex-end; color: white; }
@@ -125,6 +128,7 @@
                 </div>
             </div>
             <span id="skillBadge" class="skill-badge">Active Skills: 0</span>
+            <div id="skillList" class="skill-list" role="group" aria-label="Active Skills"></div>
         </div>
         <div id="updateBanner" class="update-banner" hidden>
             <span>The app was updated. Reload the page to use the latest version.</span>
@@ -207,6 +211,29 @@
             checkAppBuild(data);
             renderWebsite(data.state, data.version);
             document.getElementById('skillBadge').textContent = `Active Skills: ${data.active_skills_count}`;
+            renderSkills(data.active_skills || []);
+        }
+
+        // Active Skills, each with a remove button (names are shown as text, never as HTML).
+        function renderSkills(names) {
+            const list = document.getElementById('skillList');
+            list.replaceChildren();
+            for (const name of names) {
+                const chip = document.createElement('span');
+                chip.className = 'skill-chip';
+                chip.textContent = name;
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.textContent = '×';
+                remove.title = `Remove the Skill ${name}`;
+                remove.setAttribute('aria-label', `Remove the Skill ${name}`);
+                remove.onclick = async () => {
+                    await fetch(`/api/skills/${encodeURIComponent(name)}`, { method: 'DELETE' });
+                    loadState();
+                };
+                chip.append(remove);
+                list.append(chip);
+            }
         }
 
         // Website text fields use plain-text paragraphs: a blank line starts a new <p>,
@@ -574,6 +601,10 @@
             let data;
             try {
                 const res = await fetch('/api/chat', { method: 'POST', body: formData });
+                if (res.status === 413 || res.status === 429) {   // a file over its cap, or too many messages
+                    appendMsg('bot', (await res.json()).reply);
+                    return;
+                }
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 data = await res.json();
                 checkAppBuild(data);

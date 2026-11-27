@@ -49,6 +49,7 @@ def clean_state(fake_lm):
         os.remove(config.DB_PATH)
     db.init_db()
     server.sessions.clear()
+    server.chat_limiter.reset()   # each test starts with a full request bucket
     lmstudio.model_state.update(active=config.MODEL_NAME, switching=False, target=None, error=None)
     yield
 

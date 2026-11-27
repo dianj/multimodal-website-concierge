@@ -59,3 +59,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB_PATH = os.environ.get("WEBSITE_DB_PATH", os.path.join(BASE_DIR, "website_cms.db"))
 INDEX_PATH = os.path.join(BASE_DIR, "index.html")
 MAX_TOOL_ROUNDS = 8
+MAX_HISTORY_TURNS = 12  # user turns kept in the chat history (older ones are dropped, review T21.A2)
+# Upload caps, checked before the file is read (review T21.A3): a Skill goes into every system prompt.
+MAX_SKILL_BYTES = 20 * 1024
+MAX_TEXT_BYTES = 2 * 1024 * 1024
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+# Sessions and request limits (review T21.A6, T25.S5)
+MAX_SESSIONS = 200
+CHAT_PER_MINUTE = int(os.environ.get("CHAT_PER_MINUTE", "60"))  # chat requests per minute and client address

@@ -2,12 +2,14 @@
 
 The logic lives in the `concierge` package; this module wires it to HTTP. Run with: uvicorn server:app
 """
+import asyncio
 import base64
 import json
 import os
 import tempfile
 import threading
 import uuid
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -15,15 +17,20 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from openai import APIConnectionError, APITimeoutError
 
-from concierge import agent
+from concierge import agent, ratelimit
 from concierge.agent import run_llm_turn, strip_images_from_history
 from concierge.config import (
     ALLOWED_MODELS,
+    CHAT_PER_MINUTE,
     DEFAULT_VOICE_GENDER,
     INDEX_PATH,
     LLM_BASE_URL,
     MAX_AUDIO_BYTES,
     MAX_BRIEF_TTS_CHARS,
+    MAX_IMAGE_BYTES,
+    MAX_SESSIONS,
+    MAX_SKILL_BYTES,
+    MAX_TEXT_BYTES,
     MAX_TTS_CHARS,
 )
 from concierge.db import get_latest_state, init_db
@@ -41,17 +48,31 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(title="Multimodal AI Website Maintenance Concierge", lifespan=lifespan)
 
-# Chat sessions (history and active Skills) are kept in memory, keyed by a cookie.
-sessions = {}
+# Chat sessions (history and active Skills) are kept in memory, keyed by a cookie; at most MAX_SESSIONS, the least
+# recently used is dropped first (review T21.A6). active_skills: {file name: text}; the same name replaces it.
+sessions: OrderedDict[str, dict] = OrderedDict()
+IMAGE_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+# Chat requests per minute and client address (token bucket, T25.S5).
+chat_limiter = ratelimit.RateLimiter(CHAT_PER_MINUTE)
 
-def get_session(request: Request):
+def get_session(request: Request, create: bool = True):
+    """This browser's session. Only a chat message makes a new one: polling without a cookie (the page loading its
+    state) makes none, so it cannot push real sessions out. (None, None) when there is none and create is False."""
     session_id = request.cookies.get("concierge_session")
-    if not session_id or session_id not in sessions:
-        session_id = str(uuid.uuid4())
-        sessions[session_id] = {"active_skills": [], "chat_history": []}
+    if session_id in sessions:
+        sessions.move_to_end(session_id)
+        return session_id, sessions[session_id]
+    if not create:
+        return None, None
+    session_id = str(uuid.uuid4())
+    sessions[session_id] = {"active_skills": {}, "chat_history": [], "lock": asyncio.Lock()}
+    while len(sessions) > MAX_SESSIONS:
+        sessions.popitem(last=False)
     return session_id, sessions[session_id]
 
-def set_session_cookie(response: JSONResponse, session_id: str):
+def set_session_cookie(response: JSONResponse, session_id: str | None):
+    if session_id is None:
+        return response
     response.set_cookie(
         key="concierge_session",
         value=session_id,
@@ -105,11 +126,37 @@ def app_build() -> str:
 
 @app.get("/api/state")
 async def api_state(request: Request):
-    session_id, session = get_session(request)
+    session_id, session = get_session(request, create=False)
+    skills = session["active_skills"] if session else {}
     ver_id, state = get_latest_state()
-    response = JSONResponse({"version": ver_id, "state": state, "active_skills_count": len(session["active_skills"]),
-                             "app_build": app_build()})
+    response = JSONResponse({"version": ver_id, "state": state, "active_skills_count": len(skills),
+                             "active_skills": list(skills), "app_build": app_build()})
     return set_session_cookie(response, session_id)
+
+@app.delete("/api/skills/{name}")
+async def api_remove_skill(request: Request, name: str):
+    session_id, session = get_session(request, create=False)
+    if session is None or name not in session["active_skills"]:
+        return set_session_cookie(JSONResponse({"status": "error", "message": "No active Skill with that name."},
+                                               status_code=404), session_id)
+    del session["active_skills"][name]
+    return set_session_cookie(JSONResponse({"status": "success", "active_skills": list(session["active_skills"])}),
+                              session_id)
+
+def upload_cap(filename: str, attachment_type: str) -> tuple[int, str]:
+    if attachment_type == "skill":
+        return MAX_SKILL_BYTES, "A Skill file"
+    if os.path.splitext(filename.lower())[1] in IMAGE_TYPES:
+        return MAX_IMAGE_BYTES, "An image"
+    return MAX_TEXT_BYTES, "A text file"
+
+async def read_capped(file: UploadFile, cap: int) -> bytes | None:
+    """The file's bytes, or None when it is over the cap: refused by its declared size before reading, otherwise
+    after reading at most one byte more than the cap."""
+    if file.size is not None and file.size > cap:
+        return None
+    raw = await file.read(cap + 1)
+    return None if len(raw) > cap else raw
 
 @app.post("/api/undo")
 async def api_undo():
@@ -181,7 +228,18 @@ async def api_chat(
     voice_mode: bool = Form(False),
     file: UploadFile = File(None)
 ):
+    address = request.client.host if request.client else "unknown"
+    if not chat_limiter.allow(address):
+        return JSONResponse({"reply": "Too many messages in a short time. Please wait a moment.", "tools_used": []},
+                            status_code=429, headers={"Retry-After": str(chat_limiter.retry_after())})
     session_id, session = get_session(request)
+    # One turn at a time per session: a second message waits, so it sees the first one's reply and changes.
+    async with session["lock"]:
+        return await chat_turn(session_id, session, message, attachment_type, voice_mode, file)
+
+
+async def chat_turn(session_id: str, session: dict, message: str, attachment_type: str, voice_mode: bool,
+                    file: UploadFile | None):
     if model_state["switching"]:
         response = JSONResponse({
             "reply": (f"The AI model is being switched to '{model_state['target']}'. "
@@ -200,16 +258,17 @@ async def api_chat(
         user_content_blocks.append({"type": "text", "text": message.strip()})
 
     if file and file.filename:
-        raw_bytes = await file.read()
+        cap, what = upload_cap(file.filename, attachment_type)
+        raw_bytes = await read_capped(file, cap)
+        if raw_bytes is None:
+            response = JSONResponse({"reply": f"{what} can be at most {cap // 1024:,} KB; this one is too large. "
+                                              "Nothing was loaded.", "tools_used": []}, status_code=413)
+            return set_session_cookie(response, session_id)
         fname = file.filename.lower()
+        extension = os.path.splitext(fname)[1]
 
-        if fname.endswith((".png", ".jpg", ".jpeg", ".webp")):
-            if fname.endswith(".png"):
-                mime = "image/png"
-            elif fname.endswith(".webp"):
-                mime = "image/webp"
-            else:
-                mime = "image/jpeg"
+        if attachment_type != "skill" and extension in IMAGE_TYPES:
+            mime = IMAGE_TYPES[extension]
             b64 = base64.b64encode(raw_bytes).decode("utf-8")
             user_content_blocks.append({
                 "type": "image_url",
@@ -221,9 +280,9 @@ async def api_chat(
                     "or suggest improvements.")})
         else:
             text_content = raw_bytes.decode("utf-8", errors="ignore")
-            is_skill = attachment_type == "skill" or any(word in fname for word in ("skill", "guideline", "handoff"))
-            if is_skill:
-                active_skills.append(f"[Skill File: {file.filename}]\n{text_content}")
+            # A Skill only when the client chose "Load as Skill": a file name decides nothing (review T21.A3).
+            if attachment_type == "skill":
+                active_skills[file.filename] = f"[Skill File: {file.filename}]\n{text_content}"
                 skill_loaded = file.filename
                 user_content_blocks.append({
                     "type": "text",
@@ -246,7 +305,8 @@ async def api_chat(
 
     try:
         # The OpenAI client is blocking; run it in a worker thread so the server stays responsive.
-        msg = await run_in_threadpool(run_llm_turn, active_model, active_skills, turn_history, tools_used, voice_mode)
+        msg = await run_in_threadpool(run_llm_turn, active_model, list(active_skills.values()), turn_history,
+                                      tools_used, voice_mode)
 
         if msg.tool_calls:
             bot_reply = ("Stopped after too many consecutive tool calls. "

@@ -51,7 +51,7 @@ def test_guardrail_result_is_passed_back_to_the_model(client, fake_lm):
 def test_skill_file_is_injected_into_the_system_prompt(client, fake_lm):
     fake_lm.script(reply="Rules noted.")
     files = {"file": ("brand_guidelines_skill.md", b"Never use red.", "text/markdown")}
-    data = client.post("/api/chat", data={"message": ""}, files=files).json()
+    data = client.post("/api/chat", data={"message": "", "attachment_type": "skill"}, files=files).json()
     assert data["skill_loaded"] == "brand_guidelines_skill.md"
     assert "Never use red." in fake_lm.last_system_prompt()
 

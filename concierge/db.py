@@ -18,6 +18,7 @@ TICKET_COLUMNS = {
     "status": "TEXT NOT NULL DEFAULT 'open'",
     "priority": "TEXT NOT NULL DEFAULT 'normal'",
     "updated_at": "TEXT",
+    "evidence": "TEXT",     # approval tickets: the client's words and the sign-off gate's decision (JSON)
 }
 
 def connect():
