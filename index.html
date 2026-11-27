@@ -63,7 +63,7 @@
         .dots span:nth-child(2) { animation-delay: 0.15s; }
         .dots span:nth-child(3) { animation-delay: 0.3s; }
         @keyframes bounce { 0%, 80%, 100% { transform: scale(0.5); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
-        .hint { font-size: 11px; color: #64748b; }
+        .hint { font-size: 11px; color: #94a3b8; }
         .mic-btn { width: 54px; background: #1e293b; border: 1px solid #475569; border-radius: 8px; font-size: 22px; cursor: pointer; color: white; }
         .mic-btn:hover { background: #334155; }
         .mic-btn.recording { background: #dc2626; border-color: #dc2626; animation: pulse 1.2s infinite; }
@@ -77,7 +77,7 @@
         .font-controls button:disabled { opacity: 0.4; cursor: not-allowed; }
         #fontSizeLabel { min-width: 34px; text-align: center; }
         .voice-toggle { font-size: 12px; color: #cbd5e1; display: flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
-        .speak-btn { background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 13px; padding: 0; margin-top: 6px; }
+        .speak-btn { background: none; border: none; color: #cbd5e1; cursor: pointer; font-size: 13px; padding: 0; margin-top: 6px; }
         .speak-btn:hover { color: #38bdf8; }
         .md > * + * { margin-top: 8px; }
         .md ul, .md ol { padding-left: 20px; }
@@ -139,9 +139,9 @@
         </div>
         <div class="input-area">
             <div class="file-row">
-                <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.webp,.md,.txt,.json">
-                <select id="attachmentType">
-                    <option value="auto">Auto-detect file</option>
+                <input type="file" id="fileInput" accept=".png,.jpg,.jpeg,.webp,.md,.txt,.json" aria-label="Attach a file: a screenshot, a content brief or a Skill">
+                <select id="attachmentType" aria-label="How to use the attached file">
+                    <option value="auto">Document or screenshot</option>
                     <option value="skill">Load as Skill / Guardrail</option>
                     <option value="content">Content Brief</option>
                 </select>
@@ -157,7 +157,7 @@
                     <div class="font-controls" role="group" aria-label="Chat text size">
                         <button type="button" onclick="changeChatFont(-1)" title="Smaller text" aria-label="A− smaller text">A−</button>
                         <span id="fontSizeLabel">14px</span>
-                        <button type="button" onclick="changeChatFont(1)" title="Larger text" aria-label="Larger text">A+</button>
+                        <button type="button" onclick="changeChatFont(1)" title="Larger text" aria-label="A+ larger text">A+</button>
                     </div>
                     <label class="voice-toggle"><input type="checkbox" id="voiceReplies" onchange="saveVoicePref()"> 🔊 Voice replies</label>
                     <select id="voiceGender" onchange="saveVoicePref()" title="Voice for spoken replies" aria-label="Voice for spoken replies">

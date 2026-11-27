@@ -5,6 +5,7 @@ The LLM is the scripted fake from tests/fake_lmstudio.py, so each test is determ
 import json
 
 import pytest
+from axe import assert_no_axe_violations
 from playwright.sync_api import Page, expect
 
 from concierge import tickets
@@ -219,52 +220,29 @@ def test_a_file_over_its_cap_gets_a_clear_message(page: Page, app_url, fake_lm):
     expect(last_bot_message(page)).to_contain_text("too large")
 
 
+# --- Accessibility (review T21.A8, T25.S9) ---------------------------------------------
 
-
-def test_active_skills_are_listed_and_can_be_removed(page: Page, app_url, fake_lm):
-    """Review T21.A3: a Skill is loaded only as a Skill, listed by name, and removable."""
-    fake_lm.script(reply="Brand rules noted.")
+def test_the_app_has_no_axe_violations(page: Page, app_url, fake_lm):
+    """WCAG 2.0/2.1 A and AA on the three main views: start, the dark preview, the ticket panel."""
     open_app(page, app_url)
-    page.locator("#attachmentType").select_option("skill")
-    page.locator("#fileInput").set_input_files(
-        files=[{"name": "brand.md", "mimeType": "text/markdown", "buffer": b"Never use red."}])
-    send(page, "")
-    expect(page.locator("#skillList .skill-chip")).to_have_text("brand.md×")
-    expect(page.locator("#skillBadge")).to_have_text("Active Skills: 1")
-    page.get_by_role("button", name="Remove the Skill brand.md").click()
-    expect(page.locator("#skillList .skill-chip")).to_have_count(0)
-    expect(page.locator("#skillBadge")).to_have_text("Active Skills: 0")
+    assert_no_axe_violations(page)
+
+    page.emulate_media(color_scheme="dark")
+    fake_lm.script(("configure_dark_mode", {"enabled": True, "default_mode": "dark"}), reply="Dark mode is on.")
+    send(page, "add dark mode")
+    expect(page.locator("#siteRoot")).to_have_css("background-color", DARK_BG)
+    assert_no_axe_violations(page)
+
+    tickets.create_support_ticket("Newsletter form", "Add a newsletter form.", "No tool can add forms.")
+    page.get_by_role("button", name="Tickets").click()
+    expect(page.locator(".ticket-card")).to_have_count(1)
+    assert_no_axe_violations(page)
 
 
-def test_a_file_over_its_cap_gets_a_clear_message(page: Page, app_url, fake_lm):
+def test_the_hero_image_has_the_alt_text_the_client_gave(page: Page, app_url, fake_lm):
+    fake_lm.script(("update_hero_image", {"image_url": "https://images.example.com/team.jpg",
+                                          "alt_text": "Our team at work"}), reply="Image updated.")
     open_app(page, app_url)
-    page.locator("#attachmentType").select_option("skill")
-    page.locator("#fileInput").set_input_files(
-        files=[{"name": "huge.md", "mimeType": "text/markdown", "buffer": b"x" * (21 * 1024)}])
-    send(page, "")
-    expect(last_bot_message(page)).to_contain_text("too large")
-
-
-def test_active_skills_are_listed_and_can_be_removed(page: Page, app_url, fake_lm):
-    """Review T21.A3: a Skill is loaded only as a Skill, listed by name, and removable."""
-    fake_lm.script(reply="Brand rules noted.")
-    open_app(page, app_url)
-    page.locator("#attachmentType").select_option("skill")
-    page.locator("#fileInput").set_input_files(
-        files=[{"name": "brand.md", "mimeType": "text/markdown", "buffer": b"Never use red."}])
-    send(page, "")
-    expect(page.locator("#skillList .skill-chip")).to_have_text("brand.md×")
-    expect(page.locator("#skillBadge")).to_have_text("Active Skills: 1")
-    page.get_by_role("button", name="Remove the Skill brand.md").click()
-    expect(page.locator("#skillList .skill-chip")).to_have_count(0)
-    expect(page.locator("#skillBadge")).to_have_text("Active Skills: 0")
-
-
-def test_a_file_over_its_cap_gets_a_clear_message(page: Page, app_url, fake_lm):
-    open_app(page, app_url)
-    page.locator("#attachmentType").select_option("skill")
-    page.locator("#fileInput").set_input_files(
-        files=[{"name": "huge.md", "mimeType": "text/markdown", "buffer": b"x" * (21 * 1024)}])
-    send(page, "")
-    expect(last_bot_message(page)).to_contain_text("too large")
-
+    expect(page.locator("#siteRoot img").first).to_have_attribute("alt", "")     # decorative by default
+    send(page, "Use the team photo")
+    expect(page.locator("#siteRoot img").first).to_have_attribute("alt", "Our team at work")

@@ -153,3 +153,13 @@ def test_reply_language_detection():
     assert voice.detect_reply_language("Done!") == "en"
     assert voice.detect_reply_language("#14532d") == "en"
     assert voice.detect_reply_language("Готово! Смених цвета.") == "bg"
+
+
+def test_hero_image_alt_text():
+    """Review T21.A8: the client's site had an <img> without alt (WCAG 1.1.1)."""
+    assert state()["sections"]["hero"]["image_alt"] == ""
+    ok = call(tools.update_hero_image, "https://images.example.com/team.jpg", alt_text="  Our team\nat work ")
+    assert ok["status"] == "success" and state()["sections"]["hero"]["image_alt"] == "Our team at work"
+    assert call(tools.update_hero_image, "https://images.example.com/x.jpg", alt_text="x" * 251)["status"] == "error"
+    call(tools.update_hero_image, "https://images.example.com/y.jpg")          # no alt given: the old one stays
+    assert state()["sections"]["hero"]["image_alt"] == "Our team at work"

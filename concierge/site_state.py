@@ -49,7 +49,8 @@ DEFAULT_SITE_STATE = {
             "title": "Modern Digital Solutions for Your Business",
             "subtitle": "We build fast, reliable, and scalable web applications tailored to your needs.",
             "cta_text": "Get Started",
-            "image_url": "https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1000&q=80"
+            "image_url": "https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=1000&q=80",
+            "image_alt": ""     # the <img alt>; "" = decorative until the client describes the image
         },
         "services": {
             "heading": "Our Services",
@@ -83,6 +84,7 @@ def upgrade_state(state: dict) -> dict:
         quote, author = testimonials.pop("quote", ""), testimonials.pop("author", "")
         testimonials["items"] = [{"quote": quote, "author": author}] if quote else []
     testimonials.setdefault("autoplay_seconds", 6)
+    state["sections"].get("hero", {}).setdefault("image_alt", "")
     dark = state["theme"].setdefault("dark_mode", {})
     for key, value in DEFAULT_DARK_MODE.items():
         dark.setdefault(key, value)
