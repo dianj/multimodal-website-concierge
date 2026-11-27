@@ -218,3 +218,28 @@ def test_a_file_over_its_cap_gets_a_clear_message(page: Page, app_url, fake_lm):
     send(page, "")
     expect(last_bot_message(page)).to_contain_text("too large")
 
+
+
+def test_active_skills_are_listed_and_can_be_removed(page: Page, app_url, fake_lm):
+    """Review T21.A3: a Skill is loaded only as a Skill, listed by name, and removable."""
+    fake_lm.script(reply="Brand rules noted.")
+    open_app(page, app_url)
+    page.locator("#attachmentType").select_option("skill")
+    page.locator("#fileInput").set_input_files(
+        files=[{"name": "brand.md", "mimeType": "text/markdown", "buffer": b"Never use red."}])
+    send(page, "")
+    expect(page.locator("#skillList .skill-chip")).to_have_text("brand.md×")
+    expect(page.locator("#skillBadge")).to_have_text("Active Skills: 1")
+    page.get_by_role("button", name="Remove the Skill brand.md").click()
+    expect(page.locator("#skillList .skill-chip")).to_have_count(0)
+    expect(page.locator("#skillBadge")).to_have_text("Active Skills: 0")
+
+
+def test_a_file_over_its_cap_gets_a_clear_message(page: Page, app_url, fake_lm):
+    open_app(page, app_url)
+    page.locator("#attachmentType").select_option("skill")
+    page.locator("#fileInput").set_input_files(
+        files=[{"name": "huge.md", "mimeType": "text/markdown", "buffer": b"x" * (21 * 1024)}])
+    send(page, "")
+    expect(last_bot_message(page)).to_contain_text("too large")
+

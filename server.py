@@ -5,6 +5,7 @@ The logic lives in the `concierge` package; this module wires it to HTTP. Run wi
 import asyncio
 import base64
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -38,6 +39,8 @@ from concierge.lmstudio import ensure_default_model_on_startup, list_available_m
 from concierge.tickets import TICKET_STATUSES, get_ticket, list_tickets, parse_ticket_id, set_ticket_status
 from concierge.tools import redo_version, rollback_version
 from concierge.voice import clean_for_speech, synthesize_speech, transcribe_audio, trim_to_sentences
+
+log = logging.getLogger("concierge.server")
 
 
 @asynccontextmanager
@@ -305,8 +308,11 @@ async def chat_turn(session_id: str, session: dict, message: str, attachment_typ
 
     try:
         # The OpenAI client is blocking; run it in a worker thread so the server stays responsive.
+        decisions_log = []
         msg = await run_in_threadpool(run_llm_turn, active_model, list(active_skills.values()), turn_history,
-                                      tools_used, voice_mode)
+                                      tools_used, voice_mode, decisions_log)
+        for record in decisions_log:      # the sign-off gate's decisions, also when it said no (review T21.A5)
+            log.info("gate %s session=%s %s", record["question_id"], session_id[:8], json.dumps(record))
 
         if msg.tool_calls:
             bot_reply = ("Stopped after too many consecutive tool calls. "
@@ -315,7 +321,7 @@ async def chat_turn(session_id: str, session: dict, message: str, attachment_typ
             bot_reply = msg.content or "Changes applied."
         turn_history.append({"role": "assistant", "content": bot_reply})
         strip_images_from_history(turn_history)
-        chat_history[:] = turn_history
+        chat_history[:] = trim_history(compact_history(turn_history))
 
     except APITimeoutError:  # a subclass of APIConnectionError, so it must come first
         bot_reply = (

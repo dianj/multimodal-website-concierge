@@ -83,6 +83,29 @@ def run_llm_turn(active_model: str, active_skills: list, turn_history: list, too
             })
     return msg
 
+STATE_READ_STUB = json.dumps({
+    "status": "success",
+    "note": "An older copy of the site state was here. Call get_current_site_state again for the current one.",
+})
+
+
+def compact_history(history: list) -> list:
+    """Replace every get_current_site_state result except the newest with a one-line stub: each full state is
+    about 2.4 k characters and only the latest one is still true (review T21.A2)."""
+    reads = {tc["id"] for m in history if m.get("role") == "assistant" for tc in m.get("tool_calls") or []
+             if tc["function"]["name"] == "get_current_site_state"}
+    results = [i for i, m in enumerate(history) if m.get("role") == "tool" and m.get("tool_call_id") in reads]
+    return [{**m, "content": STATE_READ_STUB} if i in results[:-1] else m for i, m in enumerate(history)]
+
+
+def trim_history(history: list, max_turns: int = config.MAX_HISTORY_TURNS) -> list:
+    """Keep the last `max_turns` user turns. Cuts only before a user message, so tool-call pairs stay complete."""
+    user_indexes = [i for i, m in enumerate(history) if m.get("role") == "user"]
+    if len(user_indexes) <= max_turns:
+        return history
+    return history[user_indexes[-max_turns]:]
+
+
 def strip_images_from_history(chat_history: list):
     """Replace Base64 image blocks with a short placeholder so screenshots are not re-sent every turn."""
     for entry in chat_history:
