@@ -2,11 +2,12 @@
 
 Every tool returns a JSON string: status success, error, or blocked_by_guardrail with a reason.
 """
+import copy
 import json
 import re
 
 from .db import STATUS_ACTIVE, STATUS_UNDONE, connect, get_latest_state, save_new_state
-from .guardrails import HEX_COLOR_RE, color_contrast_ratio, normalize_palette_changes, palette_guardrail
+from .guardrails import HEX_COLOR_RE, contrast_refusal, normalize_palette_changes
 from .site_state import (
     DARK_DEFAULT_MODES,
     HOVER_ELEMENTS,
@@ -92,12 +93,11 @@ def update_theme_style(primary_color: str = None, background_color: str = None, 
         return error(problem)
     if not changes:
         return error("Provide at least one property to change.")
-    ver_id, state = get_latest_state()
-    new_theme = {**state["theme"], **changes}
-    refusal = palette_guardrail(new_theme, "Light theme")
-    if refusal:
+    ver_id, current = get_latest_state()
+    state = copy.deepcopy(current)
+    state["theme"].update(changes)
+    if refusal := contrast_refusal(current, state):
         return blocked(refusal)
-    state["theme"] = new_theme
     summary = ", ".join(f"{k}={v}" for k, v in changes.items())
     new_ver = save_new_state(state, f"Changed theme: {summary}")
     return json.dumps({"status": "success", "new_version": new_ver, "changed": changes})
@@ -115,17 +115,16 @@ def configure_dark_mode(enabled: bool, background_color: str = None, text_color:
     })
     if problem:
         return error(problem)
-    ver_id, state = get_latest_state()
+    ver_id, current = get_latest_state()
+    state = copy.deepcopy(current)
     dark = {**state["theme"]["dark_mode"], **changes, "enabled": enabled}
     if switcher_position is not None:
         dark["switcher_position"] = switcher_position
     if default_mode is not None:
         dark["default_mode"] = default_mode
-    if enabled:
-        refusal = palette_guardrail(dark, "Dark mode palette")
-        if refusal:
-            return blocked(refusal)
     state["theme"]["dark_mode"] = dark
+    if refusal := contrast_refusal(current, state):
+        return blocked(refusal)
     new_ver = save_new_state(state, f"Dark mode {'enabled' if enabled else 'disabled'}")
     result = {"status": "success", "new_version": new_ver, "dark_mode": dark}
     if enabled:
@@ -165,19 +164,15 @@ def update_card_style(mode: str, border_color: str = None, border_opacity: float
     if not changes:
         return error("Provide at least one style property to change.")
 
-    ver_id, state = get_latest_state()
+    ver_id, current = get_latest_state()
+    state = copy.deepcopy(current)
     theme = state["theme"]
     modes = ["light", "dark"] if mode == "both" else [mode]
     for m in modes:
-        new_style = {**theme["card_style"][m], **changes}
-        # Card text uses the mode's text color, so a custom card background must keep it readable.
-        if new_style["background_color"]:
-            text_color = theme["dark_mode"]["text_color"] if m == "dark" else theme["text_color"]
-            ratio = color_contrast_ratio(new_style["background_color"], text_color)
-            if ratio < 4.5:
-                return blocked(f"{m} mode card background has {ratio:.2f}:1 contrast with the text, "
-                               "it must be at least 4.5:1.")
-        theme["card_style"][m] = new_style
+        theme["card_style"][m] = {**theme["card_style"][m], **changes}
+    # Card text uses the mode's text color, so a custom card background must keep it readable.
+    if refusal := contrast_refusal(current, state):
+        return blocked(refusal)
     note = None
     if "dark" in modes and not theme["dark_mode"]["enabled"]:
         note = ("Dark mode is currently disabled, so the dark card style will only be visible after "
@@ -238,16 +233,13 @@ def update_hover_effect(element: str, enabled: bool = True, lift_px: int = None,
                 changes[key] = value
             else:
                 return error(f"{key} must be a 6-digit hex color or 'none'.")
-    # Buttons and arrows keep white text/icons on hover, so a hover background must stay readable.
-    if changes.get("background_color"):
-        ratio = color_contrast_ratio(changes["background_color"], "#ffffff")
-        if ratio < 4.5:
-            return blocked(f"Hover background has {ratio:.2f}:1 contrast with the white text, "
-                           "it must be at least 4.5:1. Choose a darker shade.")
-
-    ver_id, state = get_latest_state()
+    ver_id, current = get_latest_state()
+    state = copy.deepcopy(current)
     effect = {**state["theme"]["hover_effects"][element], **changes, "enabled": enabled}
     state["theme"]["hover_effects"][element] = effect
+    # Buttons and arrows keep white text/icons on hover, so a hover background must stay readable.
+    if refusal := contrast_refusal(current, state):
+        return blocked(refusal)
     new_ver = save_new_state(state, f"{'Updated' if enabled else 'Disabled'} hover effect: {element}")
     return json.dumps({"status": "success", "new_version": new_ver, "element": element, "hover_effect": effect})
 
