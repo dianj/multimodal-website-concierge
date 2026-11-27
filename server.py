@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from openai import APIConnectionError, APITimeoutError
 
 from concierge import agent, ratelimit
-from concierge.agent import run_llm_turn, strip_images_from_history
+from concierge.agent import compact_history, run_llm_turn, strip_images_from_history, trim_history
 from concierge.config import (
     ALLOWED_MODELS,
     CHAT_PER_MINUTE,

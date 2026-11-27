@@ -117,11 +117,31 @@ def test_calibration_cli(gate, tmp_path, monkeypatch, capsys):
     from concierge.decide import cli
 
     monkeypatch.setattr(cli, "DECISIONS_DIR", tmp_path)
-    rows = [{"id": f"c{i}", "text": "approved" if i % 4 else "more blue", "expected": "yes" if i % 4 else "no"}
-            for i in range(12)]
+    rows = [{"id": f"c{i}", "text": "approved" if i % 4 else "more blue", "context": {"previous": "Anything else?"},
+             "expected": "yes" if i % 4 else "no"} for i in range(12)]
     (tmp_path / "concierge.approve_site.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
     gate.answers += [{"Y": 0.99, "N": 0.01}] * len(rows)
     cli.main(["collect", "--question", "concierge.approve_site"])
     cli.main(["calibrate", "--question", "concierge.approve_site", "--out", str(tmp_path / "cal")])
     assert Calibration.load(tmp_path / "cal", "concierge.approve_site").temperature > 1
     assert "T = " in capsys.readouterr().out
+
+
+def test_the_gate_sees_the_question_the_client_answers(client, fake_lm, gate):
+    """Review T21.A4: after the assistant's own question, a bare "Yes" / "Да" was judged alone."""
+    fake_lm.script(reply="Is the site approved as finished, so I can send it to the developers?")
+    chat(client, "I think we're nearly there.")
+    gate.answers.append({"Y": 0.99, "N": 0.01})
+    fake_lm.script(("create_approval_ticket", {"summary_notes": "Client approved"}), reply="Done.")
+    chat(client, "Да.")
+    asked = next(r for r in gate.requests if "addressed to the system" not in r["messages"][0]["content"])
+    user = asked["messages"][1]["content"]
+    assert "The assistant's previous message: Is the site approved as finished, so I can send it to the " \
+           "developers?" in user and "Да." in user
+    assert "previous message" in decisions.APPROVE_SITE.question
+
+
+def test_a_first_message_has_no_previous_question(gate):
+    assert decisions.previous_assistant_message([{"role": "user", "content": "hi"}]).startswith("(none")
+    long = [{"role": "assistant", "content": "word " * 200}, {"role": "user", "content": "yes"}]
+    assert decisions.previous_assistant_message(long[:1]).endswith("...")

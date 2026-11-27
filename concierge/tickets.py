@@ -4,7 +4,7 @@ import re
 import sqlite3
 from datetime import datetime
 
-from .db import connect, get_latest_state
+from .db import connect, get_latest_state, get_state
 from .site_state import normalize_text
 
 # approval        = the client approved the current site; developers receive the JSON state.
@@ -17,15 +17,17 @@ TICKET_PRIORITIES = ("low", "normal", "high")
 def ticket_code(ticket_id: int) -> str:
     return f"CR-{ticket_id:04d}"
 
-def insert_ticket(ticket_type: str, title: str, details: str, priority: str, version_id: int, markdown: str) -> int:
+def insert_ticket(ticket_type: str, title: str, details: str, priority: str, version_id: int, markdown: str,
+                  evidence: dict | None = None) -> int:
     now = datetime.now().isoformat()
     conn = connect()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO change_tickets "
-        "(created_at, updated_at, version_id, ticket_markdown, type, title, details, status, priority) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)",
-        (now, now, version_id, markdown, ticket_type, title, details, priority)
+        "(created_at, updated_at, version_id, ticket_markdown, type, title, details, status, priority, evidence) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
+        (now, now, version_id, markdown, ticket_type, title, details, priority,
+         json.dumps(evidence, ensure_ascii=False) if evidence is not None else None)
     )
     ticket_id = cur.lastrowid
     conn.commit()
@@ -66,15 +68,68 @@ def set_ticket_status(ticket_id: int, status: str) -> bool:
     conn.close()
     return cur.rowcount == 1
 
-def create_approval_ticket(summary_notes: str):
+def state_changes(old, new, path: str = "") -> list[str]:
+    """What differs between two site states, one line per changed value: 'theme.primary_color: "#2563eb" -> ...'."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        lines = []
+        for key in sorted(set(old) | set(new), key=str):
+            lines += state_changes(old.get(key), new.get(key), f"{path}.{key}" if path else str(key))
+        return lines
+    if old == new:
+        return []
+
+    def short(value):
+        text = json.dumps(value, ensure_ascii=False)
+        return text if len(text) <= 120 else text[:117] + "..."
+    return [f"{path}: {short(old)} -> {short(new)}"]
+
+
+def approved_versions(conn) -> list[tuple[int, int]]:
+    return conn.execute("SELECT ticket_id, version_id FROM change_tickets WHERE type = 'approval' "
+                        "ORDER BY version_id").fetchall()
+
+
+def evidence_markdown(evidence: dict) -> str:
+    if evidence.get("gate") == "off":
+        return f"## Client's sign-off\n> {evidence['client_message']}\n\n(The sign-off gate was off.)\n"
+
+    def pct(value):
+        return "—" if value is None else f"{value:.3f}"
+    return (f"## Client's sign-off\n> {evidence['client_message']}\n\n"
+            f"In reply to: \"{evidence['previous']}\"\n\n"
+            f"## Sign-off gate\np(approve) {pct(evidence.get('p_approve'))} · p(flag) {pct(evidence.get('p_flag'))} · "
+            f"action **{evidence['action']}** ({evidence['reason']}) · model `{evidence['model']}` · calibration "
+            f"`{evidence['calibration_sha256'] or 'none'}`\n")
+
+
+def create_approval_ticket(summary_notes: str, evidence: dict | None = None):
+    """One approval ticket per site version. `evidence` (the client's words and the gate's decision) is added by the
+    agent loop, never by the model (review T21.A5)."""
     ver_id, state = get_latest_state()
+    conn = connect()
+    approved = approved_versions(conn)
+    conn.close()
+    existing = [t for t, v in approved if v == ver_id]
+    if existing:
+        return json.dumps({"status": "already_approved", "ticket_id": ticket_code(existing[0]), "version": ver_id,
+                           "message": "This version already has an approval ticket; no new ticket was created."})
+    earlier = [v for _, v in approved if v < ver_id]
+    if earlier:
+        changes = state_changes(get_state(earlier[-1]), state)
+        changes_md = (f"## Changes since the last approved version (v{earlier[-1]})\n"
+                      + ("".join(f"- `{line}`\n" for line in changes) if changes else "- (none)\n"))
+    else:
+        changes_md = "## Changes\nFirst approved version.\n"
     summary = normalize_text(str(summary_notes), True)[:2000]
     ticket_md = (
         f"# Approved Client Change Request (Version v{ver_id})\n\n"
         f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n**Summary:** {summary}\n\n"
+        + (evidence_markdown(evidence) + "\n" if evidence else "")
+        + changes_md + "\n"
         f"```json\n{json.dumps(state, indent=2, ensure_ascii=False)}\n```"
     )
-    t_id = insert_ticket("approval", f"Approved website changes (v{ver_id})", summary, "normal", ver_id, ticket_md)
+    t_id = insert_ticket("approval", f"Approved website changes (v{ver_id})", summary, "normal", ver_id, ticket_md,
+                         evidence)
     return json.dumps({"status": "ticket_created", "ticket_id": ticket_code(t_id), "type": "approval",
                        "version": ver_id})
 

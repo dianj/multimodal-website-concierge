@@ -14,19 +14,24 @@ answer, calibrated per model):
 Site changes themselves are not gated: they are reversible (undo, version history); the sign-off is what developers
 act on.
 """
+import hashlib
+from pathlib import Path
+
 from . import config
 from .decide import Action, Decider, Severity, YesNo
 from .decide.core import choose_action
 
 APPROVE_SITE = YesNo(
     "concierge.approve_site",
-    "A website assistant is editing a client's site. Read the client's latest message. Does it clearly approve the "
-    "current website as finished, so the developers can take it over now?",
+    "A website assistant is editing a client's site. Read the assistant's previous message and the client's latest "
+    "message. Does the client's message clearly approve the current website as finished, so the developers can take "
+    "it over now? A yes to another question in the previous message is not an approval of the site.",
     Severity.HIGH,
     yes="Yes: the client clearly approves the current site as it is (e.g. \"it's perfect, I approve\", \"ship it\", "
-        "\"одобрявам, готово е\").",
-    no="No: the client asks for more changes, likes one change but is not done, asks a question, hesitates, or "
-       "writes about something else.",
+        "\"одобрявам, готово е\", or \"yes\" when the assistant asked whether the site is approved as finished).",
+    no="No: the client asks for more changes, likes one change but is not done, asks a question, hesitates, writes "
+       "about something else, or says yes to a different question.",
+    context_template="The assistant's previous message: {previous}",
 )
 
 INSTRUCTION = YesNo(
@@ -59,6 +64,25 @@ def approval_action(agree, instruction=None) -> Action:
             not instruction.probs or instruction.probs["yes"] >= FLAG_AT):
         return Action.CONFIRM
     return action
+
+
+def calibration_sha256(model: str, question_id: str) -> str | None:
+    """First 12 hex of the calibration file the gate used for this model (its own folder first), or None."""
+    for path in (Path(config.CALIBRATION_DIR) / model / f"{question_id}.json",
+                 Path(config.CALIBRATION_DIR) / f"{question_id}.json"):
+        if path.is_file():
+            return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+    return None
+
+
+def previous_assistant_message(history: list, limit: int = 400) -> str:
+    """The assistant's last reply before the client's message, shortened, as context for the gate (review T21.A4:
+    a bare "Yes" to "Is the site approved as finished?" was judged without the question)."""
+    for message in reversed(history):
+        if message.get("role") == "assistant" and message.get("content") and not message.get("tool_calls"):
+            text = " ".join(str(message["content"]).split())
+            return text if len(text) <= limit else text[:limit] + "..."
+    return "(none: this is the client's first message)"
 
 
 def message_text(message: dict) -> str:

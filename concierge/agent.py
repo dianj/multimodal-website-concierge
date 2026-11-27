@@ -37,16 +37,27 @@ SIGN_OFF_NOT_GIVEN = json.dumps({
 })
 
 
-def sign_off_gate(client_text: str, model: str, decisions_log: list | None = None) -> str | None:
-    """The second key for create_approval_ticket: None = create it; otherwise the result to return instead."""
+def sign_off_gate(client_text: str, model: str, decisions_log: list | None = None, previous: str = "",
+                  evidence: dict | None = None) -> str | None:
+    """The second key for create_approval_ticket: None = create it; otherwise the result to return instead.
+    `previous`: the assistant's last reply, so a "Yes" is judged against the question it answers. `evidence` is
+    filled with the client's words and the decision, for the approval ticket (review T21.A5)."""
+    if evidence is not None:
+        evidence.update(client_message=client_text, previous=previous, model=model)
     if not config.DECISION_GATE:
+        if evidence is not None:
+            evidence["gate"] = "off"
         return None
     agree, instruction = decisions.decider(model).ask_many_sync([decisions.APPROVE_SITE, decisions.INSTRUCTION],
-                                                                client_text)
+                                                                client_text, {"previous": previous})
     action = decisions.approval_action(agree, instruction)
     if decisions_log is not None:
         decisions_log += [{**d.record.model_dump(mode="json"), "policy_action": action.value}
                           for d in (agree, instruction)]
+    if evidence is not None:
+        evidence.update(p_approve=agree.probs.get("yes"), p_flag=instruction.probs.get("yes"), action=action.value,
+                        reason=agree.reason,
+                        calibration_sha256=decisions.calibration_sha256(model, decisions.APPROVE_SITE.id))
     if action == Action.ACT:
         return None
     return SIGN_OFF_UNCLEAR if action == Action.CONFIRM else SIGN_OFF_NOT_GIVEN
@@ -59,8 +70,10 @@ def run_llm_turn(active_model: str, active_skills: list, turn_history: list, too
     Mutates turn_history and tools_used; returns the final model message. The approval ticket (the client's sign-off)
     is created only if the sign-off gate (decisions.py) agrees that the client's latest message approves the site.
     """
-    last_user = next((m for m in reversed(turn_history) if m.get("role") == "user"), {})
+    last_index = max((i for i, m in enumerate(turn_history) if m.get("role") == "user"), default=None)
+    last_user = turn_history[last_index] if last_index is not None else {}
     client_text = decisions.message_text(last_user)
+    previous = decisions.previous_assistant_message(turn_history[:last_index or 0])
     msg = None
     for _ in range(MAX_TOOL_ROUNDS + 1):
         response = llm_client.chat.completions.create(
@@ -74,12 +87,15 @@ def run_llm_turn(active_model: str, active_skills: list, turn_history: list, too
         turn_history.append(assistant_message_to_dict(msg))
         for tc in msg.tool_calls:
             tools_used.append(f"{tc.function.name}({tc.function.arguments or ''})")
-            refusal = (sign_off_gate(client_text, active_model, decisions_log)
-                       if tc.function.name == "create_approval_ticket" else None)
+            refusal, trusted = None, None
+            if tc.function.name == "create_approval_ticket":
+                evidence = {}
+                refusal = sign_off_gate(client_text, active_model, decisions_log, previous, evidence)
+                trusted = {"evidence": evidence}
             turn_history.append({
                 "role": "tool",
                 "tool_call_id": tc.id,
-                "content": refusal or execute_tool_call(tc.function.name, tc.function.arguments)
+                "content": refusal or execute_tool_call(tc.function.name, tc.function.arguments, trusted)
             })
     return msg
 

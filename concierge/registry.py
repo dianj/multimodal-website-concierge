@@ -33,8 +33,10 @@ AVAILABLE_FUNCTIONS = {
     "get_ticket_status": get_ticket_status,
 }
 
-def execute_tool_call(fn_name: str, raw_arguments: str) -> str:
-    """Run one model-requested tool call; always return a JSON string, never raise."""
+def execute_tool_call(fn_name: str, raw_arguments: str, trusted: dict | None = None) -> str:
+    """Run one model-requested tool call; always return a JSON string, never raise.
+
+    `trusted`: arguments added by the agent loop (the sign-off evidence); the model can never set them."""
     if fn_name not in AVAILABLE_FUNCTIONS:
         return json.dumps({"status": "error",
                            "message": f"Unknown tool '{fn_name}'. Available: {list(AVAILABLE_FUNCTIONS.keys())}"})
@@ -44,6 +46,8 @@ def execute_tool_call(fn_name: str, raw_arguments: str) -> str:
         return json.dumps({"status": "error", "message": f"Tool arguments are not valid JSON: {e}"})
     if not isinstance(fn_args, dict):
         return json.dumps({"status": "error", "message": "Tool arguments must be a JSON object."})
+    fn_args.pop("evidence", None)
+    fn_args.update(trusted or {})
     try:
         return AVAILABLE_FUNCTIONS[fn_name](**fn_args)
     except TypeError as e:
