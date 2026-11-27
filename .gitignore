@@ -19,6 +19,7 @@ evals/results/*.json
 .idea/
 .claude/
 .env
+HANDOFF.md
 *.log
 .coverage
 coverage.xml

@@ -90,7 +90,9 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 1. `POST /api/chat` sends the message, an optional file and the `voice_mode` flag. A voice command is first transcribed through `POST /api/transcribe`.
 2. The agent loop builds the system prompt (base rules + capabilities + HONESTY/VERIFICATION rules + voice-mode rules when on + active Skills). It sends the prompt, the session history and the 14 tool schemas to the active model.
 3. The model returns tool calls or a final reply. Tool calls are executed and their results sent back, up to `MAX_TOOL_ROUNDS = 8` rounds.
-4. Each tool validates its input, applies guardrails and saves a full JSON snapshot to `site_versions`.
+4. Each tool validates its input, builds the resulting site state, audits every contrast pair on it and saves a full
+   JSON snapshot to `site_versions`, naming the version it was made on (refused and retried if another edit was saved
+   in between).
 5. The tool result (`success`, `error` or `blocked_by_guardrail` with a reason) goes back to the model.
 6. The response contains `reply`, `tools_used`, `version`, `state` and `app_build`. With voice replies on, the browser requests MP3 from `/api/tts`.
 7. The preview re-renders from the JSON state.
@@ -99,6 +101,18 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 * LLM calls run in a worker thread (`run_in_threadpool`), so the server stays responsive.
 * Each turn works on a copy of the history, so a failed LLM call never leaves a half-finished tool exchange.
 * Base64 screenshots are replaced by a placeholder after the turn, so they are not re-sent every turn.
+* The stored history keeps the last 12 user turns (cut only before a user message, so tool calls keep their results),
+  and every `get_current_site_state` result except the newest becomes a one-line stub (a full state is about
+  2.4 k characters). Before this, 12 short turns with state reads made one request about 50 k characters, beyond the
+  16,384-token context the app loads.
+* Sessions: at most 200 in memory, the least recently used dropped first; only a chat message makes a new one, so
+  cookieless polling (`GET /api/state`) cannot push real sessions out. One turn at a time per session (an
+  `asyncio.Lock`): a second message waits and then sees the first one's reply. 60 chat requests per minute per client
+  address (token bucket, `CHAT_PER_MINUTE`) → 429.
+* Concurrent edits: `save_new_state(..., parent=version)` runs in `BEGIN IMMEDIATE` and raises `StaleVersion` when
+  another change was saved since the tool read the state; the tool then reads again and applies its change once more
+  (`on_latest_version`). Undo and redo run in the same kind of transaction. (Before: two editors at once lost every
+  edit of one of them.)
 * Unknown tools, invalid JSON and wrong arguments return errors to the model instead of crashing.
 
 **HTTP endpoints:**
@@ -107,7 +121,8 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 |---|---|
 | `GET /` | The page, with the injected build id |
 | `POST /api/chat` | Chat turn: `message`, optional `file`, `attachment_type`, `voice_mode` |
-| `GET /api/state` · `POST /api/undo` · `POST /api/redo` | Current site state and version history |
+| `GET /api/state` · `POST /api/undo` · `POST /api/redo` | Current site state and version history; `/api/state` also lists the session's active Skills |
+| `DELETE /api/skills/{name}` | Remove an active Skill from the session |
 | `GET /api/models` · `POST /api/model` | List the models and switch the loaded LLM |
 | `POST /api/transcribe` · `POST /api/tts` | Voice: audio → text, text → MP3 (`gender`, `brief`) |
 | `GET /api/tickets` · `GET /api/tickets/{CR-XXXX}` · `POST /api/tickets/{CR-XXXX}/status` | Ticket panel: list (with `open_count`), details, status change |
@@ -163,19 +178,25 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 | `configure_dark_mode` | Turns dark mode on or off. Also sets the dark palette, `switcher_position` and `default_mode`. The dark palette must pass the contrast checks. |
 | `update_card_style` | Sets service-card border color, opacity, width and background per `light`, `dark` or `both` |
 | `update_hover_effect` | Sets a whitelisted hover effect per element (see §8) |
-| `update_hero_image` | Sets the hero image; must be an `http(s)` URL |
+| `update_hero_image` | Sets the hero image (an `http(s)` URL) and its `alt_text` for the site's `<img alt>` (empty = decorative) |
 | `reorder_sections` | Must contain every section exactly once |
 | `rollback_version` | Non-destructive undo |
-| `create_approval_ticket` | Approval ticket: summary + the approved JSON state. Runs only if the sign-off gate agrees that the client's latest message approves the site (two calibrated one-letter checks, [DECISIONS.md](DECISIONS.md)) |
+| `create_approval_ticket` | Approval ticket: summary, the evidence (the client's words, the assistant's question they answered, p(approve), p(flag), the action, the model and the calibration file's hash; added by the agent loop, never by the model), the changes since the last approved version (a JSON diff computed in code) and the approved JSON state. One per site version. Runs only if the sign-off gate agrees that the client's latest message approves the site (two calibrated one-letter checks, [DECISIONS.md](DECISIONS.md)) |
 | `create_support_ticket` | `feature_request` or `support` ticket: title, client request, why the agent could not do it, optional partial work, priority. Only after the client agrees. |
 | `get_ticket_status` | One ticket by code (`CR-0003`, `3` or `cr-3`), or the 10 most recent tickets |
 
-**Contrast guardrails (all at least 4.5:1):**
+**Contrast guardrails (all at least 4.5:1), audited on the whole resulting site after every colour change**
+(`audit_contrast` in `guardrails.py`; before, each tool checked only the pair it changed, so a theme text colour could
+make an earlier card background unreadable at 1.05:1):
 * text on background;
-* white button text on `primary_color`;
+* white button text on `primary_color` (the CTA and the slider arrows);
 * the same two pairs for the dark palette;
 * a custom card background against that mode's text color;
-* white text on a hover background.
+* white text on a hover background (CTA, slider arrows).
+
+A pair that already failed in a version saved before the audit existed does not block other changes (the site never
+gets stuck); a change may not add a new failing pair. A property test (`hypothesis`) runs random sequences of 4–8
+colour tool calls and checks that no saved state fails the audit.
 
 ---
 
@@ -197,7 +218,10 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 
 **Chat pane:**
 * Enter sends and Shift+Enter adds a new line. A loader shows elapsed seconds.
-* File upload with three modes: Auto-detect, Load as Skill, Content Brief. A file is treated as a Skill if that mode is chosen or the filename contains `skill`, `guideline` or `handoff`.
+* File upload with three modes: Document or screenshot, Load as Skill, Content Brief. A file is a Skill only when the
+  client picks "Load as Skill" (the file name decides nothing). A Skill with the same file name replaces the earlier
+  one; active Skills are listed next to the badge, each with a remove button. Caps, checked before the file is read:
+  Skill 20 KB, text 2 MB, image 10 MB (413 with a message in the chat).
 * 🎤 voice command button.
 * 🔊 Voice replies toggle and Male/Female voice selector.
 * A− / A+ chat text size (12–22 px).
@@ -218,6 +242,12 @@ Browser (index.html) ──HTTP──► FastAPI (server.py) ──► LM Studio
 * Light / Dark / Auto switcher with radio semantics. Auto follows `prefers-color-scheme` live. The visitor's choice is saved in localStorage.
 * Hover CSS is generated into `<style id="siteHoverStyles">` from validated values. The browser re-checks hex colors and number ranges, so CSS cannot be injected.
 * Motion is disabled under `prefers-reduced-motion`.
+* The hero `<img>` gets `alt` from `hero.image_alt` (empty = decorative).
+
+**Accessibility:** the app's own controls pass WCAG 2.1 A/AA in axe-core (Send `#1d4ed8`, Undo `#b45309`, hint and
+"Read aloud" text lightened, names for the file input, the attachment type and the A−/A+ buttons). An axe check runs in
+the Playwright suite on the start view, the dark preview and the ticket panel (`tests/e2e/axe.py`, axe-core 4.14.1
+vendored, MPL-2.0).
 
 **localStorage keys:** `siteThemePreference`, `voiceReplies`, `voiceGender`, `chatFontSize`.
 
@@ -272,12 +302,12 @@ python -m pytest                            # needs: python -m playwright instal
 * A mutation check was done: disabling `applyHoverStyles` makes the hover test fail.
 
 **LLM evals** (`python evals/run_evals.py`, LM Studio required, about 25 minutes for both models):
-* 19 real prompts in English and Bulgarian. Each runs on a fresh site in a throwaway database.
+* 21 real prompts in English and Bulgarian. Each runs on a fresh site in a throwaway database.
 * Each prompt is graded on the outcome (final JSON state, tools used, reply), not on wording. Examples: atomic dark theme, content brief, paragraph duplication, card outline, hover, contrast guardrail, honesty on partial requests, verification, the approval ticket, offering a ticket without creating it before consent, creating it after consent (multi-turn), and looking up a ticket's status.
 * Models are loaded one at a time through `switch_model`, and Gemma is loaded again at the end.
 * Outcomes are **pass**, **fail** (wrong behaviour) or **error** (LM Studio or infrastructure problem; not counted as a model failure). A case with an error is retried once, after reloading the model.
 * **Do not edit `.py` files while evals run** if a dev server with `--reload` is running. Its restart re-loads Gemma, which unloads the model under evaluation.
-* **Last run (2026-11-21):** Gemma 4 26B 19/19 (median 13.0 s per turn), Qwen 3.8 27B 19/19 (median 49.6 s). This was a single run with one attempt per case.
+* **Last run (2026-11-26):** Gemma 4 26B 21/21 (median 14.1 s per turn), Qwen 3.8 27B 21/21 (median 89.5 s). This was a single run with one attempt per case (`evals/results/t21-sprint1.md`). `--case-file`, `--results-dir` and `--output` run a set kept outside the repo (the held-out set).
 * Results go to `evals/results/latest.md`, which is committed. A per-reply JSON file is also written but ignored by git.
 
 ## 12. Gotchas
@@ -295,15 +325,16 @@ python -m pytest                            # needs: python -m playwright instal
 * No authentication or authorization. It is a local demo.
 * The site state in SQLite is global. Chat sessions are separate, but all sessions edit the same site.
 * Sessions (history, active Skills) are in memory and lost on restart.
-* Chat attachments (images, briefs, Skill files) have **no size limit or content validation** yet. Only voice audio is limited, to 15 MB.
+* Chat attachments are capped by size (Skill 20 KB, text 2 MB, image 10 MB; audio 15 MB) but their content is not
+  validated beyond that.
 * Uploaded text and Skill files go straight into the prompt (prompt-injection surface). Guardrails in the tools limit the damage, because the model can only change validated fields.
 * The ticket panel has no authentication and sends no notifications; anyone with access to the app can change a ticket's status.
 * The contrast check supports 6-digit hex only.
-* For public deployment the app still needs HTTPS, authentication, rate limits, security headers, upload limits and persistent per-user storage.
+* For public deployment the app still needs HTTPS, authentication, security headers and persistent per-user storage
+  (rate limits and upload caps exist, in process memory).
 
 ## 14. Ideas for next steps
 
 * Ticket notifications (email or a Slack/Discord webhook) and a protected developer view.
-* Upload size and type limits for chat attachments.
 * Per-client site ownership and an approval workflow.
 * An EN/BG UI language toggle.
